@@ -150,33 +150,38 @@
             return <i data-lucide={name} width={size} height={size} className={className}></i>;
         };
 
-        // Updated Date Parser to handle YYYY-MM-DD and DD/MM/YYYY
+        // Date Parser for "DD/MM/YYYY HH:mm:ss"
         const parseDate = (dateStr) => {
             if (!dateStr || typeof dateStr !== 'string') return new Date(0);
             
-            // Try to split by common separators
-            const parts = dateStr.trim().split(/[\/\-\s]/);
+            // Clean and split
+            const cleanStr = dateStr.trim();
+            const parts = cleanStr.split(/[\/\-\s:]/); // Split by / - space :
             
-            // Check if we have enough parts for a date
+            // Expecting at least DD, MM, YYYY
             if (parts.length >= 3) {
-                const p0 = parseInt(parts[0], 10);
-                const p1 = parseInt(parts[1], 10);
-                const p2 = parseInt(parts[2], 10);
+                let day, month, year;
 
-                // Detect Format: YYYY-MM-DD (ISOish)
-                // If first part is 4 digits, assume Year
-                if (parts[0].length === 4) {
-                    return new Date(p0, p1 - 1, p2); 
+                // Check for DD/MM/YYYY format (Day first)
+                // If the first part is > 12, it must be Day (or Year, but Year is usually 4 digits)
+                // If the third part is 4 digits, it's YYYY
+                if (parts[2].length === 4) {
+                    day = parseInt(parts[0], 10);
+                    month = parseInt(parts[1], 10) - 1; // 0-indexed
+                    year = parseInt(parts[2], 10);
+                    return new Date(year, month, day);
                 }
                 
-                // Detect Format: DD/MM/YYYY (Euro/Global)
-                // If third part is 4 digits, assume Year
-                if (parts[2].length === 4) {
-                    return new Date(p2, p1 - 1, p0);
+                // Fallback for YYYY-MM-DD
+                if (parts[0].length === 4) {
+                    year = parseInt(parts[0], 10);
+                    month = parseInt(parts[1], 10) - 1;
+                    day = parseInt(parts[2], 10);
+                    return new Date(year, month, day);
                 }
             }
 
-            // Fallback to basic JS parsing (often risky with local formats, but better than 1970 if valid ISO)
+            // Fallback JS Parsing
             const d = new Date(dateStr);
             if (!isNaN(d.getTime())) return d;
 
@@ -185,6 +190,14 @@
 
         const formatDate = (dateObj) => {
             return dateObj.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+        };
+        
+        // Helper to get YYYY-MM-DD in LOCAL time to avoid timezone shifts
+        const getLocalDateKey = (dateObj) => {
+            if (!dateObj || isNaN(dateObj.getTime())) return '1970-01-01';
+            const offset = dateObj.getTimezoneOffset() * 60000;
+            const localISOTime = (new Date(dateObj.getTime() - offset)).toISOString().slice(0, 10);
+            return localISOTime;
         };
 
         // --- CHART COMPONENT ---
@@ -202,13 +215,10 @@
                         ...options.plugins,
                         datalabels: {
                             color: '#fff',
-                            // Default settings - can be overridden per dataset in data object
                             font: { weight: 'bold', size: 10 },
-                            formatter: (value, context) => {
-                                // Default formatter
-                                return value;
-                            },
-                            display: (context) => context.dataset.data[context.dataIndex] > 0
+                            display: (context) => context.dataset.data[context.dataIndex] > 0,
+                            // Default behavior, can be overridden by dataset
+                            formatter: (value) => value
                         }
                     }
                 };
@@ -566,7 +576,8 @@
                 if (filters.sampleMode) {
                     const buckets = {};
                     result.forEach(c => {
-                        const day = c.date.toISOString().split('T')[0];
+                        // Use local key for bucket to align with display
+                        const day = getLocalDateKey(c.date);
                         const key = `${c.agent}|${day}`;
                         if (!buckets[key]) buckets[key] = [];
                         buckets[key].push(c);
@@ -603,7 +614,8 @@
 
                 const dates = {};
                 evaluated.forEach(c => {
-                    const d = c.date.toISOString().split('T')[0];
+                    // Use local time grouping
+                    const d = getLocalDateKey(c.date);
                     if (!dates[d]) dates[d] = { total: 0, count: 0 };
                     dates[d].total += qaData[c.id].score;
                     dates[d].count++;
@@ -621,7 +633,8 @@
                     // Filter by selected trend agent if not 'All Agents'
                     if (trendAgent !== 'All Agents' && c.agent !== trendAgent) return;
 
-                    const d = c.date.toISOString().split('T')[0];
+                    // Use local time grouping
+                    const d = getLocalDateKey(c.date);
                     if (!dailyData[d]) dailyData[d] = { totalScore: 0, count: 0 };
                     dailyData[d].totalScore += qaData[c.id].score;
                     dailyData[d].count++;
@@ -636,9 +649,6 @@
                     counts: sortedDates.map(d => dailyData[d].count)
                 };
             }, [filteredChats, qaData, trendAgent]);
-
-            // Calculate max volume for scale
-            const maxTrendVol = Math.max(...(trendStats.counts || []), 5); 
 
             // --- EXPORT ---
             const exportCSV = () => {
@@ -946,10 +956,10 @@
                                                                         barThickness: 20,
                                                                         // Labels inside bar
                                                                         datalabels: {
-                                                                            align: 'end', // Top of the bar, inside
-                                                                            anchor: 'end',
-                                                                            offset: -5,
-                                                                            color: darkMode ? '#cbd5e1' : '#475569',
+                                                                            align: 'center', // CENTER OF BAR
+                                                                            anchor: 'center',
+                                                                            color: '#fff', // White text
+                                                                            font: { weight: 'bold' },
                                                                             formatter: (v) => v // Just the number
                                                                         }
                                                                     }
@@ -974,9 +984,7 @@
                                                                         position: 'right',
                                                                         grid: { drawOnChartArea: false }, // only want the grid lines for one axis to show up
                                                                         title: { display: true, text: 'Volume', color: '#64748b', font: {size: 10} },
-                                                                        ticks: { stepSize: 1 },
-                                                                        min: 0,
-                                                                        max: Math.max(10, maxTrendVol * 3) // Dynamic max to keep bars at bottom 1/3
+                                                                        ticks: { stepSize: 1 }
                                                                     },
                                                                     x: {
                                                                         grid: { display: false }
@@ -1027,7 +1035,7 @@
                                                             <tr key={agent} className={`border-b ${darkMode ? 'border-slate-800' : 'border-slate-100'}`}>
                                                                 <td className="px-6 py-4 font-medium">{agent}</td>
                                                                 <td className="px-6 py-4">{data.count}</td>
-                                                                <td className="px-6 py-4 font-bold">{(data.total/data.count).toFixed(1)}%</td>
+                                                                <td className="px-6 py-4 font-bold">{(data.total/data.count).toFixed(0)}%</td>
                                                                 <td className="px-6 py-4 text-red-500">{data.criticals}</td>
                                                             </tr>
                                                         ))}
