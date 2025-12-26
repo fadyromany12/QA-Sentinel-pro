@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Apex QA</title>
+    <title>Lenovo QA Manager</title>
     
     <!-- React & ReactDOM -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -20,6 +20,10 @@
             theme: {
                 extend: {
                     colors: {
+                        lenovo: {
+                            red: '#E2231A',
+                            dark: '#D11006'
+                        },
                         slate: {
                             850: '#1e293b', 
                             900: '#0f172a',
@@ -38,7 +42,6 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <!-- Added DataLabels Plugin for Charts -->
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
 
     <!-- Fonts -->
@@ -47,7 +50,7 @@
         
         body {
             font-family: 'Inter', sans-serif;
-            overflow: hidden; /* App-like feel */
+            overflow: hidden;
         }
 
         /* Glassmorphism */
@@ -80,7 +83,6 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo, useRef, useCallback } = React;
         
-        // Register Chart Plugin
         Chart.register(ChartDataLabels);
 
         // --- CONSTANTS & CONFIG ---
@@ -152,7 +154,6 @@
             if (!dateStr) return new Date(0);
             const d = new Date(dateStr);
             if (!isNaN(d.getTime())) return d;
-            // Fallback for DD/MM/YYYY
             const parts = dateStr.split(/[\/\-\s]/);
             if (parts.length >= 3) {
                 return new Date(parts[2], parts[1]-1, parts[0]);
@@ -173,7 +174,6 @@
                 if (!canvasRef.current) return;
                 if (chartRef.current) chartRef.current.destroy();
                 
-                // Merge default options for datalabels
                 const finalOptions = {
                     ...options,
                     plugins: {
@@ -185,7 +185,7 @@
                             offset: -2,
                             font: { weight: 'bold', size: 10 },
                             formatter: (value) => Math.round(value) + '%',
-                            display: (context) => context.dataset.data[context.dataIndex] > 0 // Only show if > 0
+                            display: (context) => context.dataset.data[context.dataIndex] > 0
                         }
                     }
                 };
@@ -222,7 +222,8 @@
             // Data State
             const [chats, setChats] = useState([]);
             const [surveys, setSurveys] = useState({});
-            const [qaData, setQaData] = useState({}); // { chatId: { score, criteria: {}, flags: [], criticalFail: "" } }
+            // qaData: { chatId: { score, criteria: {}, flags: [], criticalFail: "", status: "AI" | "Reviewed" } }
+            const [qaData, setQaData] = useState({}); 
             
             // UI State
             const [view, setView] = useState('upload'); // 'upload', 'workspace'
@@ -239,7 +240,6 @@
                 sampleSize: 3
             });
 
-            // Toggle Theme
             useEffect(() => {
                 document.documentElement.classList.toggle('dark', darkMode);
                 document.documentElement.classList.toggle('light', !darkMode);
@@ -357,53 +357,107 @@
                 const msgs = chat.messages;
                 const agentMsgs = msgs.filter(m => m.type === 'agent').map(m => m.text.toLowerCase());
                 const custMsgs = msgs.filter(m => m.type === 'customer').map(m => m.text.toLowerCase());
+                const allAgentText = agentMsgs.join(' ');
 
                 const criteria = {};
                 const flags = [];
                 let criticalFail = "None";
 
-                const has = (arr, kws) => arr.some(txt => kws.some(k => txt.includes(k)));
+                const has = (arr, kws) => {
+                    if (Array.isArray(arr)) {
+                        return arr.some(txt => kws.some(k => txt.includes(k)));
+                    }
+                    return kws.some(k => arr.includes(k));
+                };
 
-                // Default Logic (Heuristics)
-                criteria.greet = has(agentMsgs.slice(0,3), ['hello', 'hi', 'welcome', 'good morning', 'good afternoon']) ? 'Yes' : 'No';
+                // Expanded Keywords Dictionaries
+                const greetings = ['hello', 'hi', 'welcome', 'good morning', 'good afternoon', 'good evening', 'thank you for contacting', 'thanks for contacting', 'how can i help', 'my name is'];
+                const empathy = ['sorry', 'apologize', 'understand', 'regret', 'unfortunate', 'frustrating', 'bear with me', 'my apologies', 'sorry for the inconvenience', 'i assure you'];
+                const hold = ['hold', 'moment', 'check', 'bear with me', 'allow me to check', 'look into this', 'researching', 'brief hold', 'few minutes'];
+                const warranty = ['warranty', 'care', 'support', 'accessory', 'guarantee', 'repair', 'depot', 'onsite', 'accidental', 'damage', 'protection', 'sealed battery', 'keep your drive', 'adp'];
+                const accessories = ['mouse', 'keyboard', 'monitor', 'dock', 'charger', 'adapter', 'headset', 'bag', 'case', 'sleeve', 'cable', 'hub', 'webcam'];
+                const closing = ['anything else', 'further', 'assist you', 'other questions', 'help you with'];
+                const profClosing = ['thank', 'bye', 'wonderful day', 'great day', 'rest of your day'];
+                const csat = ['survey', 'feedback', 'short survey', 'rate', 'experience'];
+
+                // 1. Greeting
+                criteria.greet = has(agentMsgs.slice(0, 4), greetings) ? 'Yes' : 'No';
+                
+                // 2. Confirm (Assumption for AI)
                 criteria.confirm = 'Yes';
+                
+                // 3. Listening & Clear (Assumption for AI)
                 criteria.listening = 'Yes';
                 criteria.clear = 'Yes';
                 
-                if (has(custMsgs, ['upset', 'angry', 'complaint', 'manager'])) {
-                    flags.push('Angry Customer');
-                    criteria.empathy = has(agentMsgs, ['sorry', 'apologize', 'understand']) ? 'Yes' : 'No';
+                // 4. Empathy
+                const customerUpset = has(custMsgs, ['upset', 'angry', 'complaint', 'manager', 'fail', 'broken', 'slow', 'bad', 'wrong', 'ridiculous', 'waiting']);
+                if (customerUpset) {
+                    flags.push('Potential Friction');
+                    criteria.empathy = has(agentMsgs, empathy) ? 'Yes' : 'No';
                 } else {
                     criteria.empathy = 'N/A';
                 }
                 
+                // 5. Tone
                 criteria.tone = 'Yes';
-                criteria.hold = has(agentMsgs, ['hold', 'moment', 'check']) ? 'Yes' : 'N/A';
-                criteria.discovery = has(agentMsgs, ['?', 'what', 'how', 'need']) ? 'Yes' : 'No';
+                
+                // 6. Hold Etiquette
+                // Logic: If agent says "allow me to check" or similar
+                criteria.hold = has(agentMsgs, hold) ? 'Yes' : 'N/A';
+                
+                // 7. Discovery
+                criteria.discovery = has(agentMsgs, ['?', 'what', 'how', 'need', 'looking for', 'intend to use', 'purpose']) ? 'Yes' : 'No';
+                
+                // 8. Product Knowledge (Assumption)
                 criteria.product = 'Yes';
+                
+                // 9. Solution (Assumption)
                 criteria.solution = 'Yes';
+                
+                // 10. Objection Handling (Assumption)
                 criteria.objection = 'Yes';
-                criteria.warranty = has(agentMsgs, ['warranty', 'care', 'support', 'accessory']) ? 'Yes' : 'No';
+                
+                // 11. Warranty & Accessories
+                // Check for warranty keywords OR specific accessory mentions
+                criteria.warranty = has(agentMsgs, [...warranty, ...accessories]) ? 'Yes' : 'No';
+                
+                // 12. Next Steps (Assumption)
                 criteria.next_steps = 'Yes';
+                
+                // 13. Compliance (Assumption)
                 criteria.compliance = 'Yes';
-                criteria.transfer = has(agentMsgs, ['transfer', 'connect']) ? 'Yes' : 'N/A';
+                
+                // 14. Transfer
+                criteria.transfer = has(agentMsgs, ['transfer', 'connect', 'department', 'colleague']) ? 'Yes' : 'N/A';
+                
+                // 15. Disposition (Assumption)
                 criteria.disposition = 'Yes';
-                criteria.addressed = has(agentMsgs.slice(-4), ['anything else', 'further']) ? 'Yes' : 'No';
-                criteria.end_prof = has(agentMsgs.slice(-3), ['thank', 'bye']) ? 'Yes' : 'No';
-                criteria.csat = has(agentMsgs.slice(-3), ['survey', 'feedback']) ? 'Yes' : 'No';
+                
+                // 16. Addressed
+                criteria.addressed = has(agentMsgs.slice(-5), closing) ? 'Yes' : 'No';
+                
+                // 17. Professional End
+                criteria.end_prof = has(agentMsgs.slice(-4), profClosing) ? 'Yes' : 'No';
+                
+                // 18. CSAT Statement
+                criteria.csat = has(agentMsgs.slice(-4), csat) ? 'Yes' : 'No';
 
-                if (has(agentMsgs, ['shut up', 'idiot'])) criticalFail = 'CX Critical';
-                if (has(agentMsgs, ['credit card', 'cvv'])) criticalFail = 'Compliance Critical';
+                // Critical Fail Check
+                if (has(agentMsgs, ['shut up', 'idiot', 'stupid'])) criticalFail = 'CX Critical';
+                if (has(agentMsgs, ['credit card', 'cvv', 'card number', 'expiry'])) criticalFail = 'Compliance Critical';
 
                 const score = calculateScore(criteria, criticalFail);
 
-                return { criteria, flags, score, criticalFail };
+                // Initial status is AI
+                return { criteria, flags, score, criticalFail, status: 'AI' };
             };
 
             const runBatchAnalysis = () => {
                 const newData = { ...qaData };
                 filteredChats.forEach(chat => {
-                    if (!newData[chat.id]) {
+                    // Only analyze if not already reviewed
+                    if (!newData[chat.id] || newData[chat.id].status === 'AI') {
                         newData[chat.id] = analyzeChat(chat);
                     }
                 });
@@ -414,6 +468,7 @@
 
             const updateCriterion = (chatId, criterionId, value) => {
                 setQaData(prev => {
+                    // If data doesn't exist yet (not auto-scored), score it first
                     const currentChatData = prev[chatId] || analyzeChat(chats.find(c => c.id === chatId));
                     const newCriteria = { ...currentChatData.criteria, [criterionId]: value };
                     const newScore = calculateScore(newCriteria, currentChatData.criticalFail);
@@ -423,7 +478,13 @@
                         [chatId]: {
                             ...currentChatData,
                             criteria: newCriteria,
-                            score: newScore
+                            score: newScore,
+                            // Note: We don't change status to 'Reviewed' instantly on click, 
+                            // we wait for "Save" button, or we can imply manual edit. 
+                            // Request said "Save button... then I export". 
+                            // So let's keep status as is until Save is clicked, 
+                            // BUT effectively if they edit, it's manual. 
+                            // Let's keep status 'AI' until explicit Save to allow 'Reset'.
                         }
                     };
                 });
@@ -443,6 +504,26 @@
                         }
                     };
                 });
+            };
+
+            // NEW: Save & Reset
+            const saveReview = (chatId) => {
+                setQaData(prev => ({
+                    ...prev,
+                    [chatId]: {
+                        ...prev[chatId],
+                        status: 'Reviewed'
+                    }
+                }));
+                // Optional: Move to next chat or show notification?
+            };
+
+            const resetReview = (chatId) => {
+                const originalAnalysis = analyzeChat(chats.find(c => c.id === chatId));
+                setQaData(prev => ({
+                    ...prev,
+                    [chatId]: originalAnalysis
+                }));
             };
 
             // --- LOGIC: SAMPLING & FILTERING ---
@@ -486,7 +567,6 @@
                 const evaluated = filteredChats.filter(c => qaData[c.id]);
                 const totalEvaluated = evaluated.length;
                 
-                // Identify all critical failure chats for the queue
                 const criticalChats = evaluated.filter(c => qaData[c.id].criticalFail && qaData[c.id].criticalFail !== "None");
 
                 if (totalEvaluated === 0) return { avgScore: 0, totalEvaluated: 0, criticals: 0, agentStats: {}, dates: {}, criticalQueue: [] };
@@ -515,15 +595,16 @@
 
             // --- EXPORT ---
             const exportCSV = () => {
-                const headers = ['Date', 'Agent', 'Chat ID', 'Score', 'Critical Fail', 'CSAT', ...Object.values(SCORECARD).flat().map(c => c.text)];
+                const headers = ['Date', 'Agent', 'Chat ID', 'Score', 'Review Status', 'Critical Fail', 'CSAT', ...Object.values(SCORECARD).flat().map(c => c.text)];
                 const rows = filteredChats.map(c => {
-                    const qa = qaData[c.id] || { score: 0, criteria: {}, criticalFail: 'None' };
+                    const qa = qaData[c.id] || { score: 0, criteria: {}, criticalFail: 'None', status: 'Pending' };
                     const survey = surveys[c.id] ? surveys[c.id][0]?.score : 'N/A';
                     return [
                         formatDate(c.date),
                         c.agent,
                         c.id,
                         qa.score + '%',
+                        qa.status || 'AI',
                         qa.criticalFail || 'None',
                         survey,
                         ...Object.values(SCORECARD).flat().map(cri => qa.criteria[cri.id] || 'N/A')
@@ -535,7 +616,7 @@
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = 'QA_Report_V6.csv';
+                a.download = 'Lenovo_QA_Report.csv';
                 a.click();
             };
 
@@ -543,39 +624,43 @@
 
             if (view === 'upload') {
                 return (
-                    <div className="min-h-screen flex items-center justify-center relative overflow-hidden">
+                    <div className="min-h-screen flex items-center justify-center relative overflow-hidden bg-slate-950">
+                        {/* Lenovo-style ambient background */}
                         <div className="absolute inset-0 bg-slate-950">
-                            <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20"></div>
-                            <div className="absolute top-0 left-0 w-96 h-96 bg-blue-600/20 rounded-full blur-3xl -translate-x-1/2 -translate-y-1/2"></div>
-                            <div className="absolute bottom-0 right-0 w-96 h-96 bg-purple-600/20 rounded-full blur-3xl translate-x-1/2 translate-y-1/2"></div>
+                             <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20"></div>
+                             <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-lenovo-red/10 rounded-full blur-[100px] translate-x-1/2 -translate-y-1/2"></div>
+                             <div className="absolute bottom-0 left-0 w-[500px] h-[500px] bg-blue-600/10 rounded-full blur-[100px] -translate-x-1/2 translate-y-1/2"></div>
                         </div>
 
                         <div className="relative z-10 w-full max-w-4xl p-8">
                             <div className="text-center mb-12">
-                                <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-gradient-to-tr from-blue-500 to-cyan-400 shadow-lg shadow-blue-500/30 mb-6">
-                                    <Icon name="shield-check" size={40} className="text-white" />
+                                {/* Lenovo Logo Style */}
+                                <div className="inline-flex mb-6 transform hover:scale-105 transition-transform duration-300">
+                                    <div className="bg-lenovo-red text-white px-6 py-2 text-4xl font-sans font-bold tracking-wider rounded-sm shadow-xl shadow-lenovo-red/20">
+                                        Lenovo
+                                    </div>
                                 </div>
-                                <h1 className="text-5xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 via-cyan-300 to-emerald-400 pb-2">Apex QA</h1>
-                                <p className="text-slate-400 text-lg mt-2 font-light">Next-Gen Analytics & Automated Quality Assurance</p>
+                                <h1 className="text-4xl font-light text-white tracking-tight">QA Manager <span className="font-bold text-lenovo-red">Pro</span></h1>
+                                <p className="text-slate-400 text-lg mt-3 font-light">Automated Intelligence for Quality Assurance</p>
                             </div>
 
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                <div className="glass-panel p-8 rounded-2xl border border-slate-700 hover:border-blue-500/50 transition-all group cursor-pointer relative overflow-hidden">
+                                <div className="glass-panel p-8 rounded-2xl border border-slate-700 hover:border-lenovo-red/50 transition-all group cursor-pointer relative overflow-hidden">
                                     <input type="file" multiple className="absolute inset-0 opacity-0 cursor-pointer z-20" onChange={(e) => handleFileUpload(e, 'chats')} />
                                     <div className="relative z-10 flex flex-col items-center">
-                                        <div className="w-16 h-16 rounded-full bg-slate-800 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                                            <Icon name="message-square" className="text-blue-400" size={24} />
+                                        <div className="w-16 h-16 rounded-full bg-slate-800 flex items-center justify-center mb-4 group-hover:bg-lenovo-red transition-colors">
+                                            <Icon name="message-square" className="text-white" size={24} />
                                         </div>
                                         <h3 className="text-xl font-semibold text-white">Upload Chats</h3>
                                         <p className="text-slate-500 text-sm mt-2 text-center">Drag & Drop CSV Logs</p>
                                         {chats.length > 0 && <span className="mt-4 px-3 py-1 bg-emerald-500/20 text-emerald-400 text-xs rounded-full font-mono">{chats.length} Loaded</span>}
                                     </div>
                                 </div>
-                                <div className="glass-panel p-8 rounded-2xl border border-slate-700 hover:border-purple-500/50 transition-all group cursor-pointer relative overflow-hidden">
+                                <div className="glass-panel p-8 rounded-2xl border border-slate-700 hover:border-blue-500/50 transition-all group cursor-pointer relative overflow-hidden">
                                     <input type="file" className="absolute inset-0 opacity-0 cursor-pointer z-20" onChange={(e) => handleFileUpload(e, 'surveys')} />
                                     <div className="relative z-10 flex flex-col items-center">
-                                        <div className="w-16 h-16 rounded-full bg-slate-800 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                                            <Icon name="file-bar-chart" className="text-purple-400" size={24} />
+                                        <div className="w-16 h-16 rounded-full bg-slate-800 flex items-center justify-center mb-4 group-hover:bg-blue-600 transition-colors">
+                                            <Icon name="file-bar-chart" className="text-white" size={24} />
                                         </div>
                                         <h3 className="text-xl font-semibold text-white">Link Surveys</h3>
                                         <p className="text-slate-500 text-sm mt-2 text-center">Match via Chat ID</p>
@@ -583,7 +668,7 @@
                                     </div>
                                 </div>
                             </div>
-                            <button onClick={() => setView('workspace')} disabled={chats.length === 0} className={`mt-8 w-full py-4 rounded-xl font-bold text-lg transition-all flex items-center justify-center gap-2 ${chats.length > 0 ? 'bg-gradient-to-r from-blue-600 to-cyan-600 text-white shadow-xl shadow-blue-900/30 hover:scale-[1.02]' : 'bg-slate-800 text-slate-500 cursor-not-allowed'}`}>
+                            <button onClick={() => setView('workspace')} disabled={chats.length === 0} className={`mt-8 w-full py-4 rounded-xl font-bold text-lg transition-all flex items-center justify-center gap-2 ${chats.length > 0 ? 'bg-gradient-to-r from-lenovo-red to-lenovo-dark text-white shadow-xl shadow-lenovo-red/20 hover:scale-[1.01]' : 'bg-slate-800 text-slate-500 cursor-not-allowed'}`}>
                                 Enter Workspace <Icon name="arrow-right" />
                             </button>
                         </div>
@@ -626,11 +711,9 @@
                     </Modal>
 
                     <nav className={`h-16 border-b flex items-center justify-between px-6 z-30 ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
-                        <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center shadow-lg">
-                                <Icon name="shield" size={16} className="text-white" />
-                            </div>
-                            <span className={`font-bold text-lg ${darkMode ? 'text-white' : 'text-slate-800'}`}>Apex <span className="text-blue-500">QA</span></span>
+                        <div className="flex items-center gap-4">
+                            <div className="bg-lenovo-red text-white px-2 py-1 text-lg font-bold tracking-wider rounded-sm">Lenovo</div>
+                            <span className={`font-light text-lg ${darkMode ? 'text-white' : 'text-slate-800'}`}>QA Manager</span>
                         </div>
                         <div className="flex items-center gap-4">
                             <button onClick={() => setDarkMode(!darkMode)} className="p-2 rounded-full hover:bg-slate-800 transition-colors text-slate-400">
@@ -646,8 +729,8 @@
                                 <div className="space-y-2">
                                     <label className="text-[10px] uppercase font-bold text-slate-500">Date Range</label>
                                     <div className="grid grid-cols-2 gap-2">
-                                        <input type="date" className={`w-full rounded-lg px-2 py-1.5 text-xs border focus:outline-none focus:ring-1 focus:ring-blue-500 ${darkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-slate-50 border-slate-300 text-slate-800'}`} onChange={e => setFilters(prev => ({...prev, startDate: e.target.value}))} />
-                                        <input type="date" className={`w-full rounded-lg px-2 py-1.5 text-xs border focus:outline-none focus:ring-1 focus:ring-blue-500 ${darkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-slate-50 border-slate-300 text-slate-800'}`} onChange={e => setFilters(prev => ({...prev, endDate: e.target.value}))} />
+                                        <input type="date" className={`w-full rounded-lg px-2 py-1.5 text-xs border focus:outline-none focus:ring-1 focus:ring-lenovo-red ${darkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-slate-50 border-slate-300 text-slate-800'}`} onChange={e => setFilters(prev => ({...prev, startDate: e.target.value}))} />
+                                        <input type="date" className={`w-full rounded-lg px-2 py-1.5 text-xs border focus:outline-none focus:ring-1 focus:ring-lenovo-red ${darkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-slate-50 border-slate-300 text-slate-800'}`} onChange={e => setFilters(prev => ({...prev, endDate: e.target.value}))} />
                                     </div>
                                 </div>
                                 <div className="space-y-2">
@@ -659,36 +742,39 @@
                                                     const newSet = new Set(filters.agents);
                                                     if (newSet.has(agent)) newSet.delete(agent); else newSet.add(agent);
                                                     setFilters(prev => ({...prev, agents: newSet}));
-                                                }} className="rounded border-slate-600 text-blue-500 focus:ring-0" />
+                                                }} className="rounded border-slate-600 text-lenovo-red focus:ring-0" />
                                                 <span className={`text-xs ${darkMode ? 'text-slate-300' : 'text-slate-700'}`}>{agent}</span>
                                             </label>
                                         ))}
                                     </div>
                                 </div>
                                 <div className="flex flex-col gap-2">
-                                    <label className="text-[10px] uppercase font-bold text-slate-500">Random Sampling</label>
+                                    <label className="text-[10px] uppercase font-bold text-slate-500">Actions</label>
                                     <div className="grid grid-cols-2 gap-2">
-                                        <button onClick={() => generateDailySample(3)} className="py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-xs font-bold shadow-lg shadow-purple-900/20 flex items-center justify-center gap-1">
+                                        <button onClick={() => generateDailySample(3)} className="py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-xs font-bold shadow-lg flex items-center justify-center gap-1">
                                             <Icon name="dices" size={12} /> Sample 3
                                         </button>
-                                        <button onClick={() => generateDailySample(5)} className="py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-xs font-bold shadow-lg shadow-purple-900/20 flex items-center justify-center gap-1">
-                                            <Icon name="dices" size={12} /> Sample 5
+                                        <button onClick={runBatchAnalysis} className="py-2 bg-lenovo-red hover:bg-lenovo-dark text-white rounded-lg text-xs font-bold shadow-lg shadow-red-900/20 flex items-center justify-center gap-1">
+                                            <Icon name="brain-circuit" size={12} /> Auto-Score
                                         </button>
                                     </div>
-                                    <button onClick={runBatchAnalysis} className="py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold shadow-lg shadow-blue-900/20 flex items-center justify-center gap-1 w-full mt-2">
-                                        <Icon name="brain-circuit" size={12} /> Auto-Score All
-                                    </button>
                                 </div>
                             </div>
                             <div className="flex-1 overflow-y-auto">
                                 {filteredChats.map(chat => {
-                                    const score = qaData[chat.id]?.score;
-                                    const critical = qaData[chat.id]?.criticalFail;
+                                    const data = qaData[chat.id];
+                                    const score = data?.score;
+                                    const critical = data?.criticalFail;
                                     const isCrit = critical && critical !== "None";
+                                    const isReviewed = data?.status === 'Reviewed';
+
                                     return (
-                                        <div key={chat.id} onClick={() => setSelectedChatId(chat.id)} className={`p-4 border-b cursor-pointer transition-all hover:pl-5 ${darkMode ? 'border-slate-800 hover:bg-slate-800' : 'border-slate-100 hover:bg-slate-50'} ${selectedChatId === chat.id ? 'border-l-4 border-l-blue-500 bg-slate-800/50' : 'border-l-4 border-l-transparent'}`}>
+                                        <div key={chat.id} onClick={() => setSelectedChatId(chat.id)} className={`p-4 border-b cursor-pointer transition-all hover:pl-5 ${darkMode ? 'border-slate-800 hover:bg-slate-800' : 'border-slate-100 hover:bg-slate-50'} ${selectedChatId === chat.id ? 'border-l-4 border-l-lenovo-red bg-slate-800/50' : 'border-l-4 border-l-transparent'}`}>
                                             <div className="flex justify-between items-start mb-1">
-                                                <span className={`font-medium text-sm ${darkMode ? 'text-slate-200' : 'text-slate-800'}`}>{chat.agent}</span>
+                                                <div className="flex items-center gap-2">
+                                                    <span className={`font-medium text-sm ${darkMode ? 'text-slate-200' : 'text-slate-800'}`}>{chat.agent}</span>
+                                                    {isReviewed && <Icon name="check-circle" size={12} className="text-emerald-500" />}
+                                                </div>
                                                 {score !== undefined && (
                                                     <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${isCrit ? 'bg-red-500/20 text-red-500' : score >= 85 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'}`}>
                                                         {score}%
@@ -759,7 +845,7 @@
                                                 <div className={`p-6 rounded-2xl border ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200 shadow-sm'}`}>
                                                     <div className="flex justify-between items-start mb-4">
                                                         <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-500"><Icon name="check-circle" /></div>
-                                                        <span className="text-xs font-bold uppercase text-slate-500">Audited</span>
+                                                        <span className="text-xs font-bold uppercase text-slate-500">Analyzed</span>
                                                     </div>
                                                     <div className={`text-4xl font-bold ${darkMode ? 'text-white' : 'text-slate-800'}`}>{stats.totalEvaluated}</div>
                                                 </div>
@@ -776,10 +862,10 @@
                                                                 datasets: [{
                                                                     label: 'Avg Score',
                                                                     data: Object.keys(stats.dates).sort().slice(-7).map(d => stats.dates[d].total / stats.dates[d].count),
-                                                                    borderColor: '#3b82f6',
+                                                                    borderColor: '#E2231A',
                                                                     tension: 0.4,
                                                                     fill: true,
-                                                                    backgroundColor: 'rgba(59, 130, 246, 0.1)'
+                                                                    backgroundColor: 'rgba(226, 35, 26, 0.1)'
                                                                 }]
                                                             }}
                                                             options={{ maintainAspectRatio: false, plugins: { legend: {display: false} }, scales: { y: { min: 0, max: 100 } } }}
@@ -845,7 +931,10 @@
                                             <div className="flex items-center gap-4">
                                                 <button onClick={() => setSelectedChatId(null)} className="p-2 hover:bg-slate-700 rounded-lg text-slate-400"><Icon name="arrow-left" /></button>
                                                 <div>
-                                                    <h3 className={`font-bold ${darkMode ? 'text-white' : 'text-slate-800'}`}>{chats.find(c=>c.id===selectedChatId)?.agent}</h3>
+                                                    <div className="flex items-center gap-2">
+                                                        <h3 className={`font-bold ${darkMode ? 'text-white' : 'text-slate-800'}`}>{chats.find(c=>c.id===selectedChatId)?.agent}</h3>
+                                                        {qaData[selectedChatId]?.status === 'Reviewed' && <span className="text-[10px] font-bold bg-emerald-500/20 text-emerald-500 px-2 py-0.5 rounded border border-emerald-500/20">VERIFIED</span>}
+                                                    </div>
                                                     <p className="text-xs text-slate-500">#{selectedChatId}</p>
                                                 </div>
                                             </div>
@@ -884,7 +973,7 @@
                                                         <span className="text-[10px] bg-slate-800 text-slate-500 px-2 py-1 rounded-full uppercase tracking-wider">{msg.text}</span>
                                                     ) : (
                                                         <div className={`max-w-[80%] rounded-2xl p-4 text-sm ${
-                                                            msg.type === 'agent' ? 'bg-blue-600 text-white rounded-br-none shadow-lg shadow-blue-900/20' : 
+                                                            msg.type === 'agent' ? 'bg-lenovo-red text-white rounded-br-none shadow-lg shadow-red-900/20' : 
                                                             darkMode ? 'bg-slate-800 text-slate-200 rounded-bl-none' : 'bg-white text-slate-800 rounded-bl-none shadow-sm'
                                                         }`}>
                                                             <div className="mb-1 text-[10px] opacity-50 uppercase font-bold">{msg.sender}</div>
@@ -897,8 +986,8 @@
                                     </div>
 
                                     {/* INTERACTIVE SCORECARD */}
-                                    <div className={`w-[450px] overflow-y-auto ${darkMode ? 'bg-slate-900' : 'bg-white'} border-l ${darkMode ? 'border-slate-800' : 'border-slate-200'}`}>
-                                        <div className="p-6">
+                                    <div className={`w-[450px] overflow-y-auto ${darkMode ? 'bg-slate-900' : 'bg-white'} border-l ${darkMode ? 'border-slate-800' : 'border-slate-200'} flex flex-col`}>
+                                        <div className="p-6 flex-1">
                                             <div className="flex justify-between items-center mb-6">
                                                 <h3 className={`text-xl font-bold ${darkMode ? 'text-white' : 'text-slate-800'}`}>Scorecard</h3>
                                                 <div className={`text-3xl font-black ${
@@ -916,7 +1005,7 @@
                                                     <button onClick={() => setShowCritInfo(true)} className="text-blue-400 hover:text-white p-1"><Icon name="info" size={14}/></button>
                                                 </div>
                                                 <select 
-                                                    className="w-full bg-slate-900 border border-slate-700 text-slate-200 text-sm rounded-lg p-2 focus:ring-1 focus:ring-blue-500"
+                                                    className="w-full bg-slate-900 border border-slate-700 text-slate-200 text-sm rounded-lg p-2 focus:ring-1 focus:ring-lenovo-red"
                                                     value={qaData[selectedChatId]?.criticalFail || "None"}
                                                     onChange={(e) => updateCritical(selectedChatId, e.target.value)}
                                                 >
@@ -924,7 +1013,7 @@
                                                 </select>
                                             </div>
 
-                                            <div className="space-y-6">
+                                            <div className="space-y-6 pb-20">
                                                 {Object.entries(SCORECARD).map(([cat, items]) => (
                                                     <div key={cat}>
                                                         <h4 className="text-xs font-bold uppercase text-slate-500 mb-3 border-b border-slate-800 pb-1">{cat}</h4>
@@ -961,6 +1050,22 @@
                                                     </div>
                                                 ))}
                                             </div>
+                                        </div>
+
+                                        {/* SAVE FOOTER */}
+                                        <div className={`p-4 border-t ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'} sticky bottom-0 z-10 flex gap-2`}>
+                                            <button 
+                                                onClick={() => resetReview(selectedChatId)}
+                                                className="flex-1 py-3 bg-slate-800 hover:bg-slate-700 text-slate-400 rounded-lg text-sm font-bold flex items-center justify-center gap-2"
+                                            >
+                                                <Icon name="refresh-ccw" size={16} /> Reset to AI
+                                            </button>
+                                            <button 
+                                                onClick={() => saveReview(selectedChatId)}
+                                                className="flex-[2] py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm font-bold shadow-lg shadow-emerald-900/20 flex items-center justify-center gap-2"
+                                            >
+                                                <Icon name="check" size={16} /> Save & Finish Review
+                                            </button>
                                         </div>
                                     </div>
                                 </div>
