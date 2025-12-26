@@ -3,723 +3,1050 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>QA Sentinel Pro - Omni-Channel Analytics</title>
+    <title>QA Sentinel Pro V5</title>
     
-    <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel for JSX -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <script src="https://unpkg.com/lucide@latest"></script>
-    
+    <!-- PapaParse for CSV -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
     
-    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
-    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
-    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
     <style>
-        body { background-color: #f8fafc; font-family: 'Inter', system-ui, -apple-system, sans-serif; }
-        .glass { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(8px); }
-        .card-hover:hover { transform: translateY(-2px); box-shadow: 0 12px 24px -8px rgba(0, 0, 0, 0.15); transition: all 0.2s ease; }
-        .gradient-text { background-clip: text; -webkit-background-clip: text; color: transparent; background-image: linear-gradient(to right, #3b82f6, #8b5cf6); }
-        .scrollbar-hide::-webkit-scrollbar { display: none; }
-        .animate-fade-in { animation: fadeIn 0.5s ease-out; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f1f5f9;
+        }
+
+        .chat-bubble {
+            max-width: 85%;
+            word-wrap: break-word;
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #94a3b8;
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #64748b;
+        }
     </style>
 </head>
 <body>
     <div id="root"></div>
 
     <script type="text/babel">
-        // --- LIBRARY CHECK ---
-        // This prevents the white screen of death if a CDN fails
-        if (!window.React || !window.ReactDOM || !window.Papa || !window.Recharts) {
-            document.getElementById('root').innerHTML = `
-                <div style="height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; color:#ef4444; font-family:sans-serif; text-align:center;">
-                    <h1 style="font-size:24px; font-weight:bold; margin-bottom:10px;">Library Load Error</h1>
-                    <p>One of the external libraries failed to load.</p>
-                    <p style="font-size:12px; color:#666;">Check your internet connection or try refreshing the page.</p>
-                </div>
-            `;
-            throw new Error("Critical libraries missing");
-        }
+        const { useState, useMemo, useEffect, useRef, useCallback } = React;
 
-        const { useState, useEffect, useMemo } = React;
-        const { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } = window.Recharts;
+        // --- Configuration & Constants ---
 
-        // --- CONSTANTS & CONFIG ---
-        const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
-        
-        // "AI" Dictionaries
-        const CRITICAL_KEYWORDS = ['lawyer', 'sue', 'legal', 'supervisor', 'manager', 'complaint', 'social media', 'scam', 'fraud', 'angry', 'never buy', 'shame'];
-        const SENTIMENT_POSITIVE = ['great', 'amazing', 'thanks', 'thank', 'good', 'helpful', 'fast', 'excellent', 'love', 'best'];
-        const SENTIMENT_NEGATIVE = ['bad', 'slow', 'rude', 'worst', 'useless', 'waiting', 'ignore', 'broken', 'waste', 'stupid'];
-        
-        const TOPICS = {
-            'Shipping': ['delivery', 'ship', 'arrive', 'delay', 'tracking', 'order', 'wait'],
-            'Product': ['screen', 'keyboard', 'laptop', 'broken', 'quality', 'battery', 'charge'],
-            'Service': ['agent', 'rude', 'slow', 'response', 'answer', 'chat', 'support'],
-            'Refund': ['money', 'refund', 'return', 'back', 'card', 'charge']
+        const safeParseDate = (dateStr) => {
+            if (!dateStr) return new Date(0); 
+            // Handle Excel serial dates if any
+            if (!isNaN(dateStr) && !dateStr.includes('-') && !dateStr.includes('/')) return new Date(0); 
+
+            let d = new Date(dateStr);
+            if (!isNaN(d.getTime())) return d;
+
+            // Handle DD/MM/YYYY
+            const parts = dateStr.split(/[\/\-\s:]/);
+            if (parts.length >= 3) {
+                const day = parseInt(parts[0], 10);
+                const month = parseInt(parts[1], 10) - 1;
+                const year = parseInt(parts[2], 10);
+                if (year > 1990 && month >= 0 && month <= 11 && day >= 1 && day <= 31) {
+                    d = new Date(year, month, day);
+                    if (!isNaN(d.getTime())) return d;
+                }
+            }
+            return new Date(0);
         };
 
-        // --- HELPER FUNCTIONS ---
-        const analyzeSentiment = (text) => {
-            if (!text) return 'Neutral';
-            const lower = text.toLowerCase();
-            let score = 0;
-            SENTIMENT_POSITIVE.forEach(w => { if (lower.includes(w)) score++; });
-            SENTIMENT_NEGATIVE.forEach(w => { if (lower.includes(w)) score--; });
-            if (score > 0) return 'Positive';
-            if (score < 0) return 'Negative';
-            return 'Neutral';
+        const QA_STRUCTURE = {
+            "Opening": [
+                { id: "greet", text: "Agent greeted the customer professionally and introduced themselves", weight: 2.0 },
+                { id: "confirm_name", text: "Agent confirmed the customer’s name and reason for contact", weight: 3.0 }
+            ],
+            "Communication": [
+                { id: "active_listen", text: "Agent conversed actively without interrupting (Active Listening)", weight: 5.0 },
+                { id: "clear_lang", text: "Language was clear, professional, and free of jargon", weight: 5.0 },
+                { id: "empathy", text: "Agent acknowledged customer concerns with empathy", weight: 5.0 },
+                { id: "tone", text: "Tone was confident, professional, and engaging", weight: 2.0 },
+                { id: "hold", text: "Agent applied correct hold etiquette", weight: 3.0 }
+            ],
+            "Solution/Sales": [
+                { id: "discovery", text: "Agent asked relevant discovery questions to understand needs", weight: 7.5 },
+                { id: "knowledge", text: "Agent demonstrated strong product and service knowledge", weight: 7.5 },
+                { id: "solution", text: "Agent offered the right solution based on identified needs", weight: 7.5 },
+                { id: "objection", text: "Agent handled objections and highlighted competitive advantages", weight: 7.5 },
+                { id: "upsell", text: "Agent clearly stated warranty benefits / Accessories", weight: 15.0 }
+            ],
+            "Process": [
+                { id: "next_steps", text: "Agent confirmed next steps and call to action", weight: 5.0 },
+                { id: "compliance", text: "Agent followed sales process and compliance guidelines", weight: 10.0 }
+            ],
+            "Closing": [
+                { id: "transfer", text: "Agent performed transfer to correct queue (if applicable)", weight: 2.0 },
+                { id: "disposition", text: "Agent applied correct disposition and CRM notes", weight: 4.0 },
+                { id: "addressed", text: "Agent confirmed if the query was fully addressed", weight: 2.0 },
+                { id: "end_prof", text: "Agent ended the interaction professionally", weight: 2.0 },
+                { id: "csat_stmt", text: "Closing Csat Statement", weight: 5.0 }
+            ]
         };
 
-        const detectTopics = (text) => {
-            if (!text) return ['General'];
-            const lower = text.toLowerCase();
-            const found = [];
-            Object.entries(TOPICS).forEach(([topic, keywords]) => {
-                if (keywords.some(k => lower.includes(k))) found.push(topic);
-            });
-            return found.length ? found : ['General'];
+        const CRITICAL_CATEGORIES = {
+            "None": [],
+            "CX Critical": ["Rude/Sarcasm", "Wrong Info", "Chat Dumping", "Wrong Transfer"],
+            "Business Critical": ["Stacking/Discounts", "Unauthorized Price", "Mis-specifications"],
+            "Compliance Critical": ["PCI/Credit Card", "GDPR/Privacy"]
         };
 
-        const isCritical = (text) => {
-            if (!text) return false;
-            return CRITICAL_KEYWORDS.some(k => text.toLowerCase().includes(k));
-        };
+        // --- Smart Analysis Logic ---
 
-        // --- COMPONENTS ---
+        const analyzeChat = (chat, survey) => {
+            if (!chat || !chat.messages) return { criteria: {}, flags: [], failures: [] };
 
-        const FileUpload = ({ label, onUpload, iconName }) => (
-            <div className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-slate-300 rounded-xl bg-slate-50 hover:bg-slate-100 transition-colors cursor-pointer relative group">
-                <input 
-                    type="file" 
-                    accept=".csv" 
-                    onChange={(e) => onUpload(e.target.files[0])}
-                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                />
-                <div className="text-slate-400 group-hover:text-blue-500 mb-2 transition-colors">
-                     <i data-lucide={iconName} width="32" height="32"></i>
-                </div>
-                <span className="text-sm font-medium text-slate-500 group-hover:text-slate-700">{label}</span>
-                <span className="text-xs text-slate-400 mt-1">Click or drag CSV</span>
-            </div>
-        );
-
-        const MetricCard = ({ title, value, subtext, trend, color = "blue" }) => (
-            <div className="bg-white p-6 rounded-xl border border-slate-100 shadow-sm card-hover">
-                <h3 className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-2">{title}</h3>
-                <div className="flex items-end gap-2">
-                    <span className={`text-3xl font-bold text-${color}-600`}>{value}</span>
-                    {trend && <span className={`text-xs font-medium ${trend > 0 ? 'text-green-500' : 'text-red-500'} mb-1`}>{trend > 0 ? '+' : ''}{trend}%</span>}
-                </div>
-                <p className="text-xs text-slate-400 mt-2">{subtext}</p>
-            </div>
-        );
-
-        const AgentScorecard = ({ chat, onClose }) => {
-            const [scores, setScores] = useState({
-                greeting: 0,
-                empathy: 0,
-                solution: 0,
-                closing: 0,
-                grammar: 0
-            });
+            const safeText = (t) => (t || "").toLowerCase();
+            const agentMsgs = chat.messages.filter(m => m.sender === chat.agentName).map(m => safeText(m.text));
+            const customerMsgs = chat.messages.filter(m => m.sender !== chat.agentName && !['System','Bot'].includes(m.sender)).map(m => safeText(m.text));
             
-            const total = Object.values(scores).reduce((a,b) => a+b, 0);
+            const criteria = {};
+            const flags = new Set();
+            const failures = [];
+
+            const set = (id, val, failMsg) => {
+                criteria[id] = val;
+                if (val === 'No' && failMsg) failures.push(failMsg); 
+            };
+
+            // 1. Opening
+            const greetKw = ["hi", "hello", "welcome", "my name", "assist", "help", "bonjour", "hallo", "hola"];
+            const hasGreet = agentMsgs.slice(0, 3).some(m => greetKw.some(k => m.includes(k)));
+            set("greet", hasGreet ? "Yes" : "No", "Missing greeting");
+            set("confirm_name", "Yes");
+
+            // 2. Communication
+            set("active_listen", "Yes");
+            set("clear_lang", "Yes");
+            
+            const empKw = ["sorry", "apologize", "understand", "frustrat", "unfortunate", "desole", "entschuldigung"];
+            const custNegative = customerMsgs.some(m => ["angry", "upset", "complaint", "waiting", "ridiculous", "slow"].some(k => m.includes(k)));
+            
+            if (custNegative) {
+                flags.add("Heated Conversation");
+                const hasEmpathy = agentMsgs.some(m => empKw.some(k => m.includes(k)));
+                set("empathy", hasEmpathy ? "Yes" : "No", "Missed empathy opportunity");
+            } else {
+                set("empathy", "N/A");
+            }
+            
+            set("tone", "Yes");
+            const holdKw = ["hold", "moment", "minute", "check", "attendez", "warten"];
+            set("hold", agentMsgs.some(m => holdKw.some(k => m.includes(k))) ? "Yes" : "N/A");
+
+            // 3. Sales
+            const qKw = ["?", "what", "which", "how", "need", "looking for"];
+            set("discovery", agentMsgs.some(m => qKw.some(k => m.includes(k))) ? "Yes" : "No", "No discovery questions");
+            set("knowledge", "Yes");
+            set("solution", "Yes");
+            set("objection", "Yes");
+
+            const upsellKw = ["warranty", "care", "support", "mouse", "bag", "accessory", "monitor", "dock", "protection", "garantie", "zubehör"];
+            const hasUpsell = agentMsgs.some(m => upsellKw.some(k => m.includes(k)));
+            set("upsell", hasUpsell ? "Yes" : "No", "Failed to offer Warranty/Accessories");
+
+            // 4. Process
+            set("next_steps", "Yes");
+            set("compliance", "Yes");
+
+            // 5. Closing
+            const transKw = ["transfer", "connect", "department", "colleague"];
+            set("transfer", agentMsgs.some(m => transKw.some(k => m.includes(k))) ? "Yes" : "N/A");
+            set("disposition", "Yes");
+
+            const closeAsk = ["anything else", "further", "questions", "autre chose", "noch etwas"];
+            const hasCloseAsk = agentMsgs.slice(-4).some(m => closeAsk.some(k => m.includes(k)));
+            set("addressed", hasCloseAsk ? "Yes" : "No", "Did not check if query fully resolved");
+
+            const byeKw = ["thank", "bye", "good day", "wonderful", "survey", "merci", "danke", "au revoir"];
+            const hasBye = agentMsgs.slice(-3).some(m => byeKw.some(k => m.includes(k)));
+            set("end_prof", hasBye ? "Yes" : "No", "Unprofessional closing");
+            set("csat_stmt", hasBye ? "Yes" : "No", "Missing CSAT statement");
+
+            // Flags
+            if (customerMsgs.some(m => ["manager", "supervisor", "sue", "legal", "useless", "lie"].some(k => m.includes(k)))) flags.add("Angry CX");
+            if (agentMsgs.length < 2 && customerMsgs.length > 2) flags.add("No Reply");
+            if (customerMsgs.some(m => ["thank", "great", "helpful", "perfect"].some(k => m.includes(k)))) flags.add("Positive CX");
+
+            return { criteria, flags: Array.from(flags), failures };
+        };
+
+        const calculateScore = (criteria, criticalType) => {
+            if (criticalType && criticalType !== "None") return 0;
+            
+            let totalWeight = 0;
+            let earnedWeight = 0;
+            let maxWeight = 0; // Total possible weight excluding N/A
+
+            Object.values(QA_STRUCTURE).flat().forEach(q => {
+                const val = criteria[q.id];
+                if (val !== 'N/A') {
+                    totalWeight += q.weight; // Max possible points for this question
+                    if (val === 'Yes') earnedWeight += q.weight;
+                }
+            });
+
+            if (totalWeight === 0) return 0;
+            return Math.round((earnedWeight / totalWeight) * 100);
+        };
+
+        // --- Helper Components ---
+        
+        const Icon = ({ name, size = 18, className = "" }) => {
+            useEffect(() => {
+                lucide.createIcons();
+            }, [name]);
+            return <i data-lucide={name} width={size} height={size} className={className}></i>;
+        };
+
+        const MultiSelect = ({ options, selected, onChange, label }) => {
+            const [isOpen, setIsOpen] = useState(false);
+            const [filterText, setFilterText] = useState("");
+            const ref = useRef(null);
 
             useEffect(() => {
-                if(window.lucide) window.lucide.createIcons();
+                const handleClickOutside = (event) => {
+                    if (ref.current && !ref.current.contains(event.target)) setIsOpen(false);
+                };
+                document.addEventListener("mousedown", handleClickOutside);
+                return () => document.removeEventListener("mousedown", handleClickOutside);
             }, []);
 
+            const filteredOptions = options.filter(opt => opt.toLowerCase().includes(filterText.toLowerCase()));
+
+            const toggleOption = (opt) => {
+                const newSelected = new Set(selected);
+                if (newSelected.has(opt)) newSelected.delete(opt);
+                else newSelected.add(opt);
+                onChange(newSelected);
+            };
+
+            const toggleAll = () => {
+                if (selected.size === filteredOptions.length) onChange(new Set());
+                else onChange(new Set(filteredOptions));
+            };
+
             return (
-                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-                    <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl animate-fade-in flex flex-col">
-                        <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50 sticky top-0">
-                            <div>
-                                <h2 className="text-xl font-bold text-slate-800">Quality Scorecard</h2>
-                                <p className="text-sm text-slate-500">Auditing Chat #{chat?.chatId}</p>
+                <div className="relative mb-3" ref={ref}>
+                    <label className="block text-xs font-bold text-slate-400 uppercase mb-1">{label}</label>
+                    <button 
+                        onClick={() => setIsOpen(!isOpen)}
+                        className="w-full bg-slate-800 border border-slate-700 rounded-lg py-2 px-3 text-xs text-white text-left flex justify-between items-center hover:bg-slate-700 transition-colors"
+                    >
+                        <span className="truncate">
+                            {selected.size === 0 ? "Select Agents..." : 
+                             selected.size === options.length ? "All Agents" : 
+                             `${selected.size} Selected`}
+                        </span>
+                        <Icon name="chevron-down" size={14} />
+                    </button>
+                    {isOpen && (
+                        <div className="absolute top-full left-0 right-0 mt-1 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-50 max-h-64 overflow-hidden flex flex-col">
+                            <div className="p-2 border-b border-slate-700">
+                                <input 
+                                    type="text" 
+                                    placeholder="Search names..." 
+                                    className="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1 text-xs text-white focus:border-blue-500 outline-none"
+                                    value={filterText}
+                                    onChange={e => setFilterText(e.target.value)}
+                                    autoFocus
+                                />
                             </div>
-                            <button onClick={onClose} className="p-2 hover:bg-slate-200 rounded-full">
-                                <i data-lucide="x" className="w-5 h-5"></i>
-                            </button>
-                        </div>
-                        
-                        <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-8 overflow-y-auto">
-                            {/* Chat Preview */}
-                            <div className="space-y-4">
-                                <h3 className="font-semibold text-slate-700 flex items-center gap-2">
-                                    <i data-lucide="message-square" className="w-4 h-4"></i> Transcript
-                                </h3>
-                                <div className="h-96 overflow-y-auto bg-slate-50 rounded-lg p-4 text-sm border border-slate-200">
-                                    {chat?.transcript && chat.transcript.length > 0 ? (
-                                        chat.transcript.map((line, i) => (
-                                            <div key={i} className={`mb-3 ${line.from === 'Customer' ? 'pl-4' : 'pr-4'}`}>
-                                                <div className={`p-3 rounded-lg ${line.from === 'Customer' ? 'bg-white border border-slate-200 rounded-tl-none' : 'bg-blue-50 text-blue-900 rounded-tr-none'}`}>
-                                                    <p className="text-xs font-bold mb-1 opacity-70">{line.from} <span className="font-normal opacity-50">• {line.time}</span></p>
-                                                    <p>{line.text}</p>
-                                                </div>
-                                            </div>
-                                        ))
-                                    ) : (
-                                        <div className="flex items-center justify-center h-full text-slate-400">
-                                            No transcript data available.
-                                        </div>
-                                    )}
+                            <div className="overflow-y-auto flex-1">
+                                <div 
+                                    onClick={toggleAll}
+                                    className="px-3 py-2 border-b border-slate-700 hover:bg-slate-700 cursor-pointer text-xs text-blue-400 font-bold"
+                                >
+                                    Select All Visible
                                 </div>
-                            </div>
-
-                            {/* Scoring Form */}
-                            <div className="space-y-6">
-                                <div className="bg-blue-50 p-4 rounded-xl text-center">
-                                    <span className="text-sm text-blue-600 font-semibold uppercase">Total Score</span>
-                                    <div className="text-4xl font-bold text-blue-700 mt-1">{total}%</div>
-                                </div>
-
-                                {[
-                                    { id: 'greeting', label: 'Greeting & Protocol', max: 10 },
-                                    { id: 'empathy', label: 'Empathy & Soft Skills', max: 25 },
-                                    { id: 'solution', label: 'Solution Accuracy', max: 40 },
-                                    { id: 'closing', label: 'Closing & Recap', max: 15 },
-                                    { id: 'grammar', label: 'Grammar & Tone', max: 10 }
-                                ].map((field) => (
-                                    <div key={field.id}>
-                                        <div className="flex justify-between mb-2">
-                                            <label className="text-sm font-medium text-slate-700">{field.label}</label>
-                                            <span className="text-xs font-bold text-slate-400">{scores[field.id]}/{field.max}</span>
+                                {filteredOptions.map(opt => (
+                                    <div 
+                                        key={opt} 
+                                        onClick={() => toggleOption(opt)}
+                                        className="px-3 py-2 hover:bg-slate-700 cursor-pointer flex items-center gap-2 border-b border-slate-700/50 last:border-0"
+                                    >
+                                        <div className={`w-3 h-3 rounded border flex items-center justify-center ${selected.has(opt) ? 'bg-blue-600 border-blue-600' : 'border-slate-500'}`}>
+                                            {selected.has(opt) && <Icon name="check" size={10} className="text-white" />}
                                         </div>
-                                        <input 
-                                            type="range" 
-                                            min="0" 
-                                            max={field.max} 
-                                            value={scores[field.id]} 
-                                            onChange={(e) => setScores({...scores, [field.id]: parseInt(e.target.value)})}
-                                            className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
-                                        />
+                                        <span className="text-xs text-slate-200">{opt}</span>
                                     </div>
                                 ))}
-                                
-                                <button className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium shadow-lg shadow-blue-200 transition-all" onClick={() => alert("Audit Saved (Simulation)")}>
-                                    Submit Audit
-                                </button>
+                                {filteredOptions.length === 0 && <div className="p-3 text-xs text-slate-500 text-center">No matches</div>}
                             </div>
                         </div>
-                    </div>
-                </div>
-            );
-        };
-
-        const MainApp = () => {
-            const [activeTab, setActiveTab] = useState('dashboard');
-            const [chatData, setChatData] = useState([]);
-            const [surveyData, setSurveyData] = useState([]);
-            const [mergedData, setMergedData] = useState([]);
-            const [loading, setLoading] = useState(false);
-            const [selectedChat, setSelectedChat] = useState(null);
-            const [showScorecard, setShowScorecard] = useState(false);
-            const [filters, setFilters] = useState({ search: '', region: 'All' });
-
-            useEffect(() => {
-                if(window.lucide) window.lucide.createIcons();
-            }, [activeTab, mergedData, showScorecard]);
-
-            // --- DATA PROCESSING ---
-            const processData = (chats, surveys) => {
-                setLoading(true);
-                setTimeout(() => {
-                    // 1. Group Chats by ID
-                    const chatMap = {};
-                    chats.forEach(row => {
-                        const id = row.chatid; 
-                        if (!chatMap[id]) {
-                            chatMap[id] = {
-                                id: id,
-                                operator: row.from !== 'Customer' && row.from !== 'System' ? row.from : 'Unknown',
-                                date: row.date,
-                                transcript: [],
-                                critical: false,
-                                topics: new Set()
-                            };
-                        }
-                        
-                        if (row.from !== 'Customer' && row.from !== 'System' && chatMap[id].operator === 'Unknown') {
-                            chatMap[id].operator = row.from;
-                        }
-
-                        const isCrit = isCritical(row.text);
-                        if(isCrit) chatMap[id].critical = true;
-                        
-                        detectTopics(row.text).forEach(t => chatMap[id].topics.add(t));
-
-                        chatMap[id].transcript.push({
-                            time: row.date?.split(' ')[1] || '',
-                            from: row.from,
-                            text: row.text,
-                            sentiment: analyzeSentiment(row.text)
-                        });
-                    });
-
-                    // 2. Process Surveys & Link
-                    const processed = surveys.map(s => {
-                        const id = s['Conversation ID'];
-                        const linkedChat = chatMap[id];
-                        
-                        let npsType = 'Passive'; 
-                        let csatScore = 0;
-                        const rawScore = parseFloat(s['Survey Answer']);
-                        const scoreVal = parseFloat(s['Survey Score']); 
-
-                        const qText = (s['Survey Question'] || '').toLowerCase();
-                        let type = 'General';
-                        if (qText.includes('rate') || qText.includes('recommend') || qText.includes('score')) {
-                            if(rawScore <= 5) type = 'CSAT';
-                            else type = 'NPS';
-                        }
-                        
-                        if (type === 'CSAT' || !type) {
-                             if (rawScore >= 4) npsType = 'Promoter'; 
-                             else if (rawScore <= 2) npsType = 'Detractor';
-                             else npsType = 'Passive';
-                        }
-
-                        if (rawScore > 5 || qText.includes('recommend')) {
-                            if (rawScore >= 9) npsType = 'Promoter';
-                            else if (rawScore >= 7) npsType = 'Passive';
-                            else npsType = 'Detractor';
-                            type = 'NPS';
-                        }
-
-                        return {
-                            surveyId: s['Survey ID'],
-                            chatId: id,
-                            date: s['Conversation Date/Time'],
-                            agent: s['Operator Name'] || linkedChat?.operator || 'Unknown',
-                            region: s['Conversation Subsite Name'] || 'Global',
-                            question: s['Survey Question'],
-                            answer: s['Survey Answer'],
-                            score: scoreVal,
-                            comment: isNaN(rawScore) ? s['Survey Answer'] : '', 
-                            type: type,
-                            npsType: npsType,
-                            sentiment: analyzeSentiment(s['Survey Answer']),
-                            critical: linkedChat?.critical || isCritical(s['Survey Answer']),
-                            chatData: linkedChat
-                        };
-                    });
-
-                    setMergedData(processed);
-                    setChatData(Object.values(chatMap));
-                    setLoading(false);
-                }, 500);
-            };
-
-            const handleFileUpload = (file, type) => {
-                Papa.parse(file, {
-                    header: true,
-                    skipEmptyLines: true,
-                    complete: (results) => {
-                        if (type === 'chats') {
-                            const newChats = results.data;
-                            setChatData(newChats); 
-                            if (surveyData.length > 0) processData(newChats, surveyData);
-                            else setChatData(newChats);
-                        } else {
-                            const newSurveys = results.data;
-                            setSurveyData(newSurveys);
-                            if (chatData.length > 0) processData(chatData, newSurveys);
-                            else processData([], newSurveys);
-                        }
-                    }
-                });
-            };
-
-            // --- AGGREGATION LOGIC ---
-            const stats = useMemo(() => {
-                if (!mergedData.length) return null;
-
-                const agents = {};
-                let totalProm = 0, totalDet = 0, totalResp = 0;
-                let totalCsatSum = 0, totalCsatCount = 0;
-
-                mergedData.forEach(d => {
-                    if (!agents[d.agent]) {
-                        agents[d.agent] = { name: d.agent, prom: 0, pass: 0, det: 0, total: 0, csatSum: 0, csatCount: 0, comments: [] };
-                    }
-                    
-                    const isNumeric = !isNaN(parseFloat(d.answer));
-                    
-                    if (isNumeric) {
-                        agents[d.agent].total++;
-                        totalResp++;
-                        
-                        if (d.npsType === 'Promoter') { agents[d.agent].prom++; totalProm++; }
-                        else if (d.npsType === 'Detractor') { agents[d.agent].det++; totalDet++; }
-                        else { agents[d.agent].pass++; }
-
-                        let score = parseFloat(d.score || d.answer); 
-                        if (score) {
-                            agents[d.agent].csatSum += score;
-                            agents[d.agent].csatCount++;
-                            totalCsatSum += score;
-                            totalCsatCount++;
-                        }
-                    } else if (d.comment.length > 2) {
-                        agents[d.agent].comments.push(d);
-                    }
-                });
-
-                const agentList = Object.values(agents).map(a => ({
-                    ...a,
-                    nps: a.total ? Math.round(((a.prom - a.det) / a.total) * 100) : 0,
-                    csat: a.csatCount ? (a.csatSum / a.csatCount).toFixed(1) : 0
-                })).sort((a,b) => b.nps - a.nps);
-
-                const overallNPS = totalResp ? Math.round(((totalProm - totalDet) / totalResp) * 100) : 0;
-                const overallCSAT = totalCsatCount ? (totalCsatSum / totalCsatCount).toFixed(1) : 0;
-
-                return {
-                    nps: overallNPS,
-                    csat: overallCSAT,
-                    promoters: totalProm,
-                    detractors: totalDet,
-                    passives: totalResp - totalProm - totalDet,
-                    agents: agentList,
-                    totalSurveys: mergedData.length
-                };
-
-            }, [mergedData]);
-
-            // --- RENDERERS ---
-
-            const renderDashboard = () => (
-                <div className="space-y-6 animate-fade-in">
-                    {/* KPI Cards */}
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                        <MetricCard title="Net Promoter Score" value={stats?.nps || 0} subtext="Global NPS based on uploads" trend={2.5} />
-                        <MetricCard title="CSAT Score" value={stats?.csat || 0} subtext="Average Satisfaction (5pt scale)" color="green" />
-                        <MetricCard title="Critical Alerts" value={mergedData.filter(d => d.critical).length} subtext="Chats requiring immediate attention" color="red" />
-                        <MetricCard title="Total Feedback" value={stats?.totalSurveys || 0} subtext="Processed survey responses" color="purple" />
-                    </div>
-
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                        {/* Agent Leaderboard */}
-                        <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
-                            <div className="p-6 border-b border-slate-100 flex justify-between items-center">
-                                <h3 className="font-bold text-slate-700">Agent Performance Matrix</h3>
-                                <button className="text-blue-600 text-sm font-medium hover:underline">Export CSV</button>
-                            </div>
-                            <div className="overflow-x-auto">
-                                <table className="w-full text-sm text-left">
-                                    <thead className="bg-slate-50 text-slate-500 font-medium">
-                                        <tr>
-                                            <th className="p-4">Agent Name</th>
-                                            <th className="p-4">NPS</th>
-                                            <th className="p-4">CSAT</th>
-                                            <th className="p-4">Prom/Pass/Det</th>
-                                            <th className="p-4">Volume</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-slate-100">
-                                        {stats?.agents.slice(0, 10).map((agent, idx) => (
-                                            <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                                                <td className="p-4 font-medium text-slate-700 flex items-center gap-2">
-                                                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center text-white text-xs font-bold">
-                                                        {agent.name.charAt(0)}
-                                                    </div>
-                                                    {agent.name}
-                                                </td>
-                                                <td className="p-4">
-                                                    <span className={`px-2 py-1 rounded-full text-xs font-bold ${agent.nps >= 50 ? 'bg-green-100 text-green-700' : agent.nps >= 0 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}`}>
-                                                        {agent.nps}
-                                                    </span>
-                                                </td>
-                                                <td className="p-4 font-semibold text-slate-600">{agent.csat}</td>
-                                                <td className="p-4">
-                                                    <div className="flex items-center gap-1 text-xs">
-                                                        <span className="text-green-600 font-bold">{agent.prom}</span>/
-                                                        <span className="text-slate-400">{agent.pass}</span>/
-                                                        <span className="text-red-500 font-bold">{agent.det}</span>
-                                                    </div>
-                                                </td>
-                                                <td className="p-4 text-slate-500">{agent.total}</td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-
-                        {/* Distribution Chart */}
-                        <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6">
-                            <h3 className="font-bold text-slate-700 mb-6">Sentiment Distribution</h3>
-                            <div className="h-64">
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <PieChart>
-                                        <Pie
-                                            data={[
-                                                { name: 'Promoters', value: stats?.promoters || 0 },
-                                                { name: 'Passives', value: stats?.passives || 0 },
-                                                { name: 'Detractors', value: stats?.detractors || 0 }
-                                            ]}
-                                            cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value"
-                                        >
-                                            <Cell fill="#10b981" />
-                                            <Cell fill="#fbbf24" />
-                                            <Cell fill="#ef4444" />
-                                        </Pie>
-                                        <Tooltip />
-                                        <Legend verticalAlign="bottom" height={36}/>
-                                    </PieChart>
-                                </ResponsiveContainer>
-                            </div>
-                            <div className="mt-4 space-y-3">
-                                <div className="p-3 bg-red-50 rounded-lg border border-red-100">
-                                    <h5 className="text-xs font-bold text-red-800 uppercase mb-1">Top Complaint</h5>
-                                    <p className="text-sm text-red-600">"Delivery delays" appeared in 45% of detractor comments.</p>
-                                </div>
-                                <div className="p-3 bg-green-50 rounded-lg border border-green-100">
-                                    <h5 className="text-xs font-bold text-green-800 uppercase mb-1">Top Strength</h5>
-                                    <p className="text-sm text-green-600">"Agent Friendliness" mentioned in 60% of promoter comments.</p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            );
-
-            const renderSurveyFeed = () => (
-                <div className="space-y-4 animate-fade-in">
-                    <div className="flex gap-4 mb-6">
-                        <div className="relative flex-1">
-                            <i data-lucide="search" className="absolute left-3 top-3 w-5 h-5 text-slate-400"></i>
-                            <input 
-                                type="text" 
-                                placeholder="Search comments, IDs, or Agents..." 
-                                className="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                value={filters.search}
-                                onChange={e => setFilters({...filters, search: e.target.value})}
-                            />
-                        </div>
-                        <select className="px-4 py-2 rounded-lg border border-slate-200 bg-white text-slate-600 focus:outline-none">
-                            <option>All Regions</option>
-                            <option>United Kingdom</option>
-                            <option>Denmark</option>
-                        </select>
-                    </div>
-
-                    <div className="grid grid-cols-1 gap-4">
-                        {mergedData
-                            .filter(d => d.comment && d.comment.length > 2) // Only show actual comments
-                            .filter(d => d.comment.toLowerCase().includes(filters.search.toLowerCase()) || d.chatId.includes(filters.search))
-                            .slice(0, 50)
-                            .map((item, i) => (
-                            <div key={i} className={`bg-white p-5 rounded-xl border ${item.critical ? 'border-red-200 bg-red-50/30' : 'border-slate-100'} shadow-sm hover:shadow-md transition-shadow`}>
-                                <div className="flex justify-between items-start mb-3">
-                                    <div className="flex items-center gap-2">
-                                        <span className={`px-2 py-1 rounded text-xs font-bold uppercase ${
-                                            item.npsType === 'Promoter' ? 'bg-green-100 text-green-700' : 
-                                            item.npsType === 'Detractor' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'
-                                        }`}>{item.npsType}</span>
-                                        <span className="text-slate-400 text-xs">ID: {item.chatId}</span>
-                                    </div>
-                                    <span className="text-xs text-slate-400">{item.date}</span>
-                                </div>
-                                <p className="text-slate-700 text-sm mb-4 leading-relaxed">"{item.comment}"</p>
-                                
-                                <div className="flex items-center justify-between pt-3 border-t border-slate-100">
-                                    <div className="flex items-center gap-3">
-                                        <div className="flex items-center gap-1 text-xs text-slate-500">
-                                            <i data-lucide="user" className="w-3 h-3"></i> {item.agent}
-                                        </div>
-                                        <div className="flex items-center gap-1 text-xs text-slate-500">
-                                            <i data-lucide="map-pin" className="w-3 h-3"></i> {item.region}
-                                        </div>
-                                    </div>
-                                    
-                                    {item.chatData ? (
-                                        <button 
-                                            onClick={() => {
-                                                setSelectedChat({
-                                                    chatId: item.chatId,
-                                                    transcript: item.chatData.transcript
-                                                });
-                                                setShowScorecard(true);
-                                            }}
-                                            className="text-blue-600 text-sm font-medium hover:text-blue-700 flex items-center gap-1"
-                                        >
-                                            <i data-lucide="eye" className="w-4 h-4"></i> Audit Chat
-                                        </button>
-                                    ) : (
-                                        <span className="text-slate-300 text-xs italic">Transcript Unavailable</span>
-                                    )}
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            );
-
-            // --- MAIN UI ---
-            return (
-                <div className="min-h-screen bg-slate-50 flex">
-                    {/* Sidebar */}
-                    <div className="w-64 bg-slate-900 text-slate-300 flex flex-col fixed h-full z-20">
-                        <div className="p-6 border-b border-slate-800">
-                            <h1 className="text-white font-bold text-xl tracking-tight flex items-center gap-2">
-                                <i data-lucide="shield-check" className="w-6 h-6 text-blue-500"></i>
-                                QA Sentinel
-                            </h1>
-                            <p className="text-xs text-slate-500 mt-1">Pro Analytics Suite</p>
-                        </div>
-                        
-                        <nav className="flex-1 p-4 space-y-2">
-                            {[
-                                { id: 'dashboard', label: 'Dashboard', icon: 'layout-dashboard' },
-                                { id: 'surveys', label: 'Survey Analysis', icon: 'message-circle' },
-                                { id: 'chats', label: 'Chat Logs', icon: 'file-text' },
-                            ].map(item => (
-                                <button
-                                    key={item.id}
-                                    onClick={() => setActiveTab(item.id)}
-                                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all ${
-                                        activeTab === item.id 
-                                        ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50' 
-                                        : 'hover:bg-slate-800 hover:text-white'
-                                    }`}
-                                >
-                                    <i data-lucide={item.icon} className="w-5 h-5"></i>
-                                    {item.label}
-                                </button>
-                            ))}
-                        </nav>
-
-                        <div className="p-4 border-t border-slate-800">
-                            <div className="bg-slate-800 rounded-xl p-4">
-                                <h4 className="text-xs font-bold text-white uppercase mb-3">Data Sources</h4>
-                                <div className="space-y-3">
-                                    <FileUpload 
-                                        label="Team Chats" 
-                                        iconName="message-square"
-                                        onUpload={(f) => handleFileUpload(f, 'chats')} 
-                                    />
-                                    <FileUpload 
-                                        label="Surveys" 
-                                        iconName="clipboard-list"
-                                        onUpload={(f) => handleFileUpload(f, 'surveys')} 
-                                    />
-                                </div>
-                                {loading && <p className="text-xs text-blue-400 mt-2 animate-pulse">Processing AI Analytics...</p>}
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Main Content */}
-                    <main className="flex-1 ml-64 p-8">
-                        <header className="flex justify-between items-center mb-8">
-                            <div>
-                                <h2 className="text-2xl font-bold text-slate-800">
-                                    {activeTab === 'dashboard' && 'Executive Dashboard'}
-                                    {activeTab === 'surveys' && 'CSAT & Feedback Explorer'}
-                                    {activeTab === 'chats' && 'Live Chat Repository'}
-                                </h2>
-                                <p className="text-slate-500 text-sm mt-1">
-                                    {mergedData.length > 0 
-                                        ? `Analysis of ${mergedData.length} customer interactions` 
-                                        : 'Upload CSV files to begin analysis'}
-                                </p>
-                            </div>
-                            <div className="flex gap-2">
-                                <button className="px-4 py-2 bg-white border border-slate-200 rounded-lg text-slate-600 text-sm font-medium shadow-sm hover:bg-slate-50">
-                                    <i data-lucide="download" className="w-4 h-4 inline mr-2"></i> Report
-                                </button>
-                                <button className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium shadow-md shadow-blue-200 hover:bg-blue-700">
-                                    <i data-lucide="filter" className="w-4 h-4 inline mr-2"></i> Filters
-                                </button>
-                            </div>
-                        </header>
-
-                        {/* Content Area */}
-                        {mergedData.length === 0 && !loading ? (
-                            <div className="flex flex-col items-center justify-center h-96 text-center">
-                                <div className="w-16 h-16 bg-blue-50 rounded-full flex items-center justify-center mb-4">
-                                    <i data-lucide="upload-cloud" className="w-8 h-8 text-blue-500"></i>
-                                </div>
-                                <h3 className="text-lg font-bold text-slate-700">Waiting for Data</h3>
-                                <p className="text-slate-400 max-w-sm mt-2">Please upload both the Team Chats CSV and Survey Detail CSV using the panel on the left.</p>
-                            </div>
-                        ) : (
-                            <>
-                                {activeTab === 'dashboard' && renderDashboard()}
-                                {activeTab === 'surveys' && renderSurveyFeed()}
-                                {activeTab === 'chats' && (
-                                    <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
-                                        <table className="w-full text-sm text-left">
-                                            <thead className="bg-slate-50 text-slate-500 font-medium border-b border-slate-100">
-                                                <tr>
-                                                    <th className="p-4 w-32">Chat ID</th>
-                                                    <th className="p-4">Date</th>
-                                                    <th className="p-4">Operator</th>
-                                                    <th className="p-4">Topics</th>
-                                                    <th className="p-4 text-center">Status</th>
-                                                    <th className="p-4">Action</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody className="divide-y divide-slate-100">
-                                                {chatData.slice(0, 50).map((chat, i) => (
-                                                    <tr key={i} className="hover:bg-slate-50 group">
-                                                        <td className="p-4 font-mono text-xs text-slate-500">{chat.id}</td>
-                                                        <td className="p-4 text-slate-600">{chat.date}</td>
-                                                        <td className="p-4 font-medium text-slate-700">{chat.operator}</td>
-                                                        <td className="p-4">
-                                                            <div className="flex gap-1 flex-wrap">
-                                                                {Array.from(chat.topics).map(t => (
-                                                                    <span key={t} className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded text-xs border border-slate-200">{t}</span>
-                                                                ))}
-                                                            </div>
-                                                        </td>
-                                                        <td className="p-4 text-center">
-                                                            {chat.critical ? (
-                                                                <span className="px-2 py-1 bg-red-100 text-red-700 rounded-full text-xs font-bold animate-pulse">CRITICAL</span>
-                                                            ) : (
-                                                                <span className="px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs font-bold">Normal</span>
-                                                            )}
-                                                        </td>
-                                                        <td className="p-4">
-                                                            <button 
-                                                                onClick={() => {
-                                                                    setSelectedChat({
-                                                                        chatId: chat.id,
-                                                                        transcript: chat.transcript
-                                                                    });
-                                                                    setShowScorecard(true);
-                                                                }}
-                                                                className="text-blue-600 hover:text-blue-800 font-medium text-xs opacity-0 group-hover:opacity-100 transition-opacity"
-                                                            >
-                                                                Review
-                                                            </button>
-                                                        </td>
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                )}
-                            </>
-                        )}
-                    </main>
-
-                    {/* Modals */}
-                    {showScorecard && selectedChat && (
-                        <AgentScorecard chat={selectedChat} onClose={() => setShowScorecard(false)} />
                     )}
                 </div>
             );
         };
 
+        // --- Main App ---
+
+        const App = () => {
+            const [view, setView] = useState('upload');
+            const [chats, setChats] = useState({});
+            const [surveys, setSurveys] = useState({});
+            const [qaData, setQaData] = useState({});
+            
+            // Filters & State
+            const [dateRange, setDateRange] = useState({ start: "", end: "" });
+            const [selectedAgents, setSelectedAgents] = useState(new Set());
+            const [filteredChats, setFilteredChats] = useState([]);
+            const [searchTerm, setSearchTerm] = useState("");
+            
+            // Sampling State
+            const [sampleSize, setSampleSize] = useState(3);
+
+            const [selectedChatId, setSelectedChatId] = useState(null);
+            const [uploadStatus, setUploadStatus] = useState({ chats: 0, surveys: 0 });
+
+            // Derived Data
+            const allAgents = useMemo(() => {
+                const agents = new Set();
+                Object.values(chats).forEach(c => {
+                    if (c.agentName && c.agentName !== 'Unknown') agents.add(c.agentName);
+                });
+                return Array.from(agents).sort();
+            }, [chats]);
+
+            // Filtering Logic
+            useEffect(() => {
+                let result = Object.values(chats);
+
+                // 1. Date Range
+                if (dateRange.start) {
+                    const start = new Date(dateRange.start);
+                    result = result.filter(c => safeParseDate(c.date) >= start);
+                }
+                if (dateRange.end) {
+                    const end = new Date(dateRange.end);
+                    end.setDate(end.getDate() + 1);
+                    result = result.filter(c => safeParseDate(c.date) < end);
+                }
+
+                // 2. Agents
+                if (selectedAgents.size > 0) {
+                    result = result.filter(c => selectedAgents.has(c.agentName));
+                }
+
+                // 3. Search Term
+                if (searchTerm) {
+                    const term = searchTerm.toLowerCase();
+                    result = result.filter(c => 
+                        c.id.includes(term) || 
+                        c.agentName.toLowerCase().includes(term)
+                    );
+                }
+
+                // Sort by date desc
+                result.sort((a,b) => safeParseDate(b.date) - safeParseDate(a.date));
+
+                setFilteredChats(result);
+            }, [chats, dateRange, selectedAgents, searchTerm]);
+
+            // --- Logic Handlers ---
+
+            const handleChatUpload = async (e) => {
+                const files = Array.from(e.target.files);
+                const newChats = { ...chats };
+                
+                for (const file of files) {
+                    const parsed = await new Promise(resolve => {
+                        Papa.parse(file, { header: true, skipEmptyLines: true, complete: res => resolve(res.data) });
+                    });
+
+                    parsed.forEach(row => {
+                        const id = row.chatid || row['Chat ID'] || row.ConversationID;
+                        if (!id) return;
+
+                        if (!newChats[id]) {
+                            newChats[id] = {
+                                id: id,
+                                agentName: 'Unknown',
+                                date: row.date,
+                                messages: [],
+                                disposition: row.disposition || ''
+                            };
+                        }
+
+                        const sender = row.from;
+                        if (sender && !['System', 'Customer', 'Bot', 'Lenovo Bot'].includes(sender)) {
+                            if (newChats[id].agentName === 'Unknown') newChats[id].agentName = sender;
+                        }
+
+                        newChats[id].messages.push({
+                            sender: row.from,
+                            text: row.text || row.translatedtext || row.originaltext,
+                            time: row.date,
+                            originalText: row.originaltext
+                        });
+                    });
+                }
+                
+                Object.values(newChats).forEach(c => {
+                    c.messages.sort((a, b) => safeParseDate(a.time) - safeParseDate(b.time));
+                });
+
+                setChats(newChats);
+                setUploadStatus(prev => ({ ...prev, chats: Object.keys(newChats).length }));
+            };
+
+            const handleSurveyUpload = async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const parsed = await new Promise(resolve => {
+                    Papa.parse(file, { header: true, skipEmptyLines: true, complete: res => resolve(res.data) });
+                });
+                
+                const newSurveys = { ...surveys };
+                parsed.forEach(row => {
+                    const id = row['Conversation ID'];
+                    if (!id) return;
+                    if (!newSurveys[id]) newSurveys[id] = { questions: [], raw: row };
+                    newSurveys[id].questions.push({
+                        question: row['Survey Question'],
+                        answer: row['Survey Answer'],
+                        score: row['Survey Score'],
+                        category: row['Survey Question Category']
+                    });
+                });
+                setSurveys(newSurveys);
+                setUploadStatus(prev => ({ ...prev, surveys: Object.keys(newSurveys).length }));
+            };
+
+            const handleBatchAnalysis = () => {
+                if (!confirm(`Run AI Analysis on ${filteredChats.length} chats? This may take a moment.`)) return;
+                
+                const newQaData = { ...qaData };
+                let processedCount = 0;
+
+                filteredChats.forEach(chat => {
+                    if (!newQaData[chat.id]) { // Only analyze if not already done
+                        const result = analyzeChat(chat, surveys[chat.id]);
+                        
+                        const initCriteria = {};
+                        Object.values(QA_STRUCTURE).forEach(cat => cat.forEach(q => initCriteria[q.id] = 'N/A'));
+                        const mergedCriteria = { ...initCriteria, ...result.criteria };
+                        
+                        const score = calculateScore(mergedCriteria, "None");
+
+                        newQaData[chat.id] = {
+                            criteria: mergedCriteria,
+                            csatStatement: surveys[chat.id] ? `CSAT: ${surveys[chat.id].questions[0]?.score || 'N/A'}` : "",
+                            comment: result.failures.length > 0 ? "Potential Failures: " + result.failures.join(", ") : "AI Check: Compliant",
+                            criticalCategory: "None",
+                            criticalReason: "",
+                            finalScore: score,
+                            flags: result.flags
+                        };
+                        processedCount++;
+                    }
+                });
+
+                setQaData(newQaData);
+                alert(`Batch Analysis Complete! Processed ${processedCount} new chats.`);
+            };
+
+            const handleAdvancedSample = () => {
+                const groups = {}; // Key: "AgentName|YYYY-MM-DD"
+                
+                // Group all chats (ignoring current filters to ensure full pool availability)
+                Object.values(chats).forEach(chat => {
+                    if (!chat.agentName || chat.agentName === 'Unknown') return;
+                    
+                    const dateObj = safeParseDate(chat.date);
+                    const dateKey = dateObj.toISOString().split('T')[0]; // YYYY-MM-DD
+                    const key = `${chat.agentName}|${dateKey}`;
+                    
+                    if (!groups[key]) groups[key] = [];
+                    groups[key].push(chat);
+                });
+
+                let sampledChats = [];
+
+                // Randomly pick X from each group
+                Object.values(groups).forEach(group => {
+                    // Fisher-Yates shuffle
+                    for (let i = group.length - 1; i > 0; i--) {
+                        const j = Math.floor(Math.random() * (i + 1));
+                        [group[i], group[j]] = [group[j], group[i]];
+                    }
+                    sampledChats.push(...group.slice(0, sampleSize));
+                });
+
+                setFilteredChats(sampledChats);
+                // Also reset filters visually so user knows they are looking at a custom set
+                setSearchTerm("");
+                setSelectedAgents(new Set());
+                alert(`Generated sample: ${sampledChats.length} chats across all agents and days (${sampleSize} per agent/day).`);
+            };
+
+            const handleExport = () => {
+                const flatQuestions = [];
+                Object.values(QA_STRUCTURE).forEach(cat => cat.forEach(q => flatQuestions.push(q.text)));
+                
+                const headers = ["Date", "Agent Name", "Chat ID", ...flatQuestions, "Closing Csat Statement", "Comment", "CRITICAL TYPE", "CRITICAL SUBTYPE", "FINAL SCORE", "FLAGS"];
+                
+                const csvRows = [headers.join(",")];
+                
+                Object.keys(qaData).forEach(chatId => {
+                    const chat = chats[chatId];
+                    const qa = qaData[chatId];
+                    if (!chat) return;
+
+                    const row = [
+                        `"${chat.date}"`,
+                        `"${chat.agentName}"`,
+                        `"${chatId}"`,
+                        ...flatQuestions.map(q => `"${qa.criteria[Object.values(QA_STRUCTURE).flatMap(c=>c).find(x=>x.text===q).id] || 'N/A'}"`),
+                        `"${qa.csatStatement || ''}"`,
+                        `"${(qa.comment || '').replace(/"/g, '""')}"`,
+                        `"${qa.criticalCategory || 'None'}"`,
+                        `"${qa.criticalReason || ''}"`,
+                        `"${qa.finalScore}%"`,
+                        `"${(qa.flags || []).join(';')}"`
+                    ];
+                    csvRows.push(row.join(","));
+                });
+
+                const blob = new Blob([csvRows.join("\n")], { type: "text/csv" });
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `QA_Export_${new Date().toISOString().slice(0,10)}.csv`;
+                a.click();
+            };
+
+            if (view === 'upload') {
+                return (
+                    <div className="min-h-screen flex items-center justify-center bg-slate-50 font-sans text-slate-900">
+                        <div className="bg-white p-8 rounded-xl shadow-2xl w-full max-w-2xl border border-slate-200 transform transition-all">
+                            <div className="text-center mb-10">
+                                <div className="inline-flex items-center justify-center w-20 h-20 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-2xl mb-6 shadow-lg shadow-blue-500/30">
+                                    <Icon name="shield-check" size={40} className="text-white" />
+                                </div>
+                                <h1 className="text-4xl font-extrabold text-slate-800 tracking-tight">QA Sentinel Pro <span className="text-blue-600">V5</span></h1>
+                                <p className="text-slate-500 mt-3 text-lg">Advanced Analytics & Automated Quality Assurance</p>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-6 mb-8">
+                                <div className="border-2 border-dashed border-slate-300 rounded-xl p-6 text-center hover:bg-blue-50 hover:border-blue-400 transition-all cursor-pointer group">
+                                    <Icon name="message-square" className="mx-auto text-slate-400 group-hover:text-blue-500 mb-3" size={32} />
+                                    <h3 className="font-semibold text-slate-900">1. Upload Chats</h3>
+                                    <p className="text-xs text-slate-500 mb-4">Select all weekly CSV files</p>
+                                    <input type="file" multiple accept=".csv,.xlsx" onChange={handleChatUpload} className="hidden" id="chat-upload"/>
+                                    <label htmlFor="chat-upload" className="block w-full py-2 px-4 bg-white border border-slate-300 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50 cursor-pointer shadow-sm">Choose Files</label>
+                                    {uploadStatus.chats > 0 && <div className="mt-3 text-green-600 text-xs font-bold flex items-center justify-center gap-1"><Icon name="check-circle" size={12}/> {uploadStatus.chats} loaded</div>}
+                                </div>
+                                <div className="border-2 border-dashed border-slate-300 rounded-xl p-6 text-center hover:bg-purple-50 hover:border-purple-400 transition-all cursor-pointer group">
+                                    <Icon name="clipboard-list" className="mx-auto text-slate-400 group-hover:text-purple-500 mb-3" size={32} />
+                                    <h3 className="font-semibold text-slate-900">2. Upload Surveys</h3>
+                                    <p className="text-xs text-slate-500 mb-4">Overall Survey Detail.csv</p>
+                                    <input type="file" accept=".csv" onChange={handleSurveyUpload} className="hidden" id="survey-upload"/>
+                                    <label htmlFor="survey-upload" className="block w-full py-2 px-4 bg-white border border-slate-300 rounded-lg text-sm font-medium text-slate-700 hover:bg-slate-50 cursor-pointer shadow-sm">Choose File</label>
+                                    {uploadStatus.surveys > 0 && <div className="mt-3 text-green-600 text-xs font-bold flex items-center justify-center gap-1"><Icon name="check-circle" size={12}/> {uploadStatus.surveys} linked</div>}
+                                </div>
+                            </div>
+                            <button 
+                                onClick={() => setView('dashboard')} 
+                                disabled={uploadStatus.chats === 0} 
+                                className={`w-full py-4 rounded-xl font-bold text-white text-lg shadow-xl flex items-center justify-center gap-3 transition-transform active:scale-95 ${uploadStatus.chats > 0 ? 'bg-gradient-to-r from-blue-600 to-indigo-700 hover:from-blue-700 hover:to-indigo-800' : 'bg-slate-300 cursor-not-allowed'}`}
+                            >
+                                Launch Workspace <Icon name="arrow-right" size={20} />
+                            </button>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="flex h-screen overflow-hidden bg-slate-100">
+                    {/* Sidebar */}
+                    <aside className="w-80 bg-slate-900 text-slate-300 flex flex-col h-full shadow-2xl z-40 border-r border-slate-800">
+                        <div className="p-5 border-b border-slate-800 bg-slate-900">
+                            <div className="flex items-center gap-3 mb-6 text-white font-bold text-xl tracking-tight">
+                                <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shadow-lg shadow-blue-500/40">
+                                    <Icon name="shield" size={18} className="text-white" />
+                                </div>
+                                QA Sentinel
+                            </div>
+                            
+                            {/* Controls */}
+                            <div className="space-y-5">
+                                {/* Search */}
+                                <div>
+                                    <div className="relative">
+                                        <Icon name="search" size={14} className="absolute left-3 top-2.5 text-slate-500" />
+                                        <input 
+                                            type="text" 
+                                            placeholder="Search Chat ID or Content..." 
+                                            className="w-full bg-slate-800 border border-slate-700 rounded-lg py-2 pl-9 pr-3 text-xs text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
+                                            value={searchTerm}
+                                            onChange={e => setSearchTerm(e.target.value)}
+                                        />
+                                    </div>
+                                </div>
+
+                                {/* Date Range */}
+                                <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">From</label>
+                                        <input 
+                                            type="date" 
+                                            className="w-full bg-slate-800 border border-slate-700 rounded-lg py-1.5 px-2 text-xs text-white outline-none focus:border-blue-500"
+                                            value={dateRange.start}
+                                            onChange={e => setDateRange({...dateRange, start: e.target.value})}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">To</label>
+                                        <input 
+                                            type="date" 
+                                            className="w-full bg-slate-800 border border-slate-700 rounded-lg py-1.5 px-2 text-xs text-white outline-none focus:border-blue-500"
+                                            value={dateRange.end}
+                                            onChange={e => setDateRange({...dateRange, end: e.target.value})}
+                                        />
+                                    </div>
+                                </div>
+
+                                {/* Multi Agent Select */}
+                                <MultiSelect 
+                                    label="Agent Filter"
+                                    options={allAgents} 
+                                    selected={selectedAgents} 
+                                    onChange={setSelectedAgents} 
+                                />
+                                
+                                {/* Advanced Tools */}
+                                <div className="bg-slate-800/50 p-3 rounded-lg border border-slate-700/50">
+                                    <label className="block text-[10px] font-bold text-blue-400 uppercase mb-2 flex items-center gap-1">
+                                        <Icon name="flask-conical" size={10} /> Advanced Sampling
+                                    </label>
+                                    <div className="flex gap-2 items-center mb-2">
+                                        <input 
+                                            type="number" 
+                                            min="1" 
+                                            max="50" 
+                                            value={sampleSize} 
+                                            onChange={e => setSampleSize(parseInt(e.target.value))} 
+                                            className="w-12 bg-slate-900 border border-slate-600 rounded text-center text-xs text-white py-1"
+                                        />
+                                        <span className="text-[10px] text-slate-400">per agent / day</span>
+                                    </div>
+                                    <button 
+                                        onClick={handleAdvancedSample}
+                                        className="w-full bg-indigo-600 hover:bg-indigo-700 text-white text-xs py-1.5 rounded font-medium transition-colors flex items-center justify-center gap-1"
+                                    >
+                                        <Icon name="dices" size={12} /> Generate Daily Sample
+                                    </button>
+                                </div>
+
+                                <button 
+                                    onClick={handleBatchAnalysis}
+                                    className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs py-2.5 rounded-lg font-bold shadow-lg flex items-center justify-center gap-2 transition-all transform hover:translate-y-px"
+                                >
+                                    <Icon name="zap" size={14} className="text-yellow-300" /> 
+                                    Analyze All ({filteredChats.length})
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="p-2 bg-slate-900/50 text-[10px] text-slate-500 font-mono text-center border-b border-slate-800 uppercase tracking-widest">
+                             {filteredChats.length} Conversations
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto">
+                            {filteredChats.map(chat => {
+                                const isGraded = !!qaData[chat.id];
+                                const score = isGraded ? qaData[chat.id].finalScore : null;
+                                const isSelected = selectedChatId === chat.id;
+                                
+                                return (
+                                    <div 
+                                        key={chat.id}
+                                        onClick={() => setSelectedChatId(chat.id)}
+                                        className={`group px-4 py-3 border-b border-slate-800/50 cursor-pointer transition-all hover:bg-slate-800 ${isSelected ? 'bg-slate-800 border-l-4 border-l-blue-500 pl-3' : 'border-l-4 border-l-transparent'}`}
+                                    >
+                                        <div className="flex justify-between items-start mb-1">
+                                            <span className={`font-semibold text-sm truncate max-w-[120px] ${isSelected ? 'text-white' : 'text-slate-300 group-hover:text-white'}`}>
+                                                {chat.agentName}
+                                            </span>
+                                            {isGraded ? (
+                                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shadow-sm ${score >= 85 ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : score < 50 ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'}`}>
+                                                    {score}%
+                                                </span>
+                                            ) : (
+                                                <span className="w-2 h-2 rounded-full bg-slate-700 mt-1"></span>
+                                            )}
+                                        </div>
+                                        <div className="flex justify-between items-end">
+                                            <div className="flex flex-col">
+                                                <span className="text-[10px] text-slate-500 font-mono">{chat.id}</span>
+                                                <span className="text-[10px] text-slate-600">{safeParseDate(chat.date).toLocaleDateString()}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </aside>
+                    
+                    <main className="flex-1 flex flex-col min-w-0 bg-slate-100">
+                        {/* Header */}
+                        <header className="bg-white h-16 border-b border-slate-200 flex items-center justify-between px-8 shadow-sm z-30">
+                            <div className="flex items-center gap-4">
+                                {selectedChatId ? (
+                                    <>
+                                        <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold text-lg">
+                                            {chats[selectedChatId]?.agentName.charAt(0).toUpperCase()}
+                                        </div>
+                                        <div>
+                                            <h2 className="text-sm font-bold text-slate-800">{chats[selectedChatId]?.agentName}</h2>
+                                            <div className="text-xs text-slate-500 flex gap-2">
+                                                <span>ID: {selectedChatId}</span>
+                                                <span>•</span>
+                                                <span>{safeParseDate(chats[selectedChatId]?.date).toLocaleString()}</span>
+                                            </div>
+                                        </div>
+                                    </>
+                                ) : (
+                                    <div className="text-slate-400 text-sm font-medium">No chat selected</div>
+                                )}
+                            </div>
+                            <button 
+                                onClick={handleExport}
+                                className="bg-slate-800 hover:bg-slate-900 text-white px-5 py-2 rounded-lg text-xs font-bold flex items-center gap-2 uppercase tracking-wide transition-colors shadow-lg shadow-slate-300"
+                            >
+                                <Icon name="download" size={14} /> Export Report
+                            </button>
+                        </header>
+
+                        {/* Content */}
+                        {selectedChatId && chats[selectedChatId] ? (
+                            <div className="flex-1 flex overflow-hidden">
+                                <ChatTranscript 
+                                    chat={chats[selectedChatId]} 
+                                    survey={surveys[selectedChatId]}
+                                />
+                                <QAForm 
+                                    chat={chats[selectedChatId]} 
+                                    survey={surveys[selectedChatId]} 
+                                    initialData={qaData[selectedChatId]}
+                                    onSave={(data) => setQaData(prev => ({...prev, [selectedChatId]: data}))}
+                                    analyzeFn={analyzeChat}
+                                />
+                            </div>
+                        ) : (
+                            <div className="flex-1 flex flex-col items-center justify-center text-slate-400 bg-slate-50/50">
+                                <div className="w-24 h-24 bg-white rounded-full flex items-center justify-center shadow-sm mb-6">
+                                    <Icon name="activity" size={40} className="text-slate-300" />
+                                </div>
+                                <h3 className="text-lg font-semibold text-slate-600 mb-2">Ready to Analyze</h3>
+                                <p className="text-slate-400 text-sm max-w-xs text-center">Select a conversation from the list or use the batch tools to process multiple chats at once.</p>
+                            </div>
+                        )}
+                    </main>
+                </div>
+            );
+        };
+
+        const ChatTranscript = ({ chat, survey }) => {
+            const bottomRef = useRef(null);
+            
+            useEffect(() => {
+                if(bottomRef.current) bottomRef.current.scrollIntoView({ behavior: 'smooth' });
+            }, [chat.id]);
+
+            if (!chat) return <div className="p-10 text-center text-slate-500">Loading transcript...</div>;
+
+            return (
+                <div className="flex-1 overflow-y-auto p-8 bg-slate-100 border-r border-slate-200">
+                    {/* Survey Widget */}
+                    {survey && (
+                         <div className="mb-8 bg-white border border-purple-100 rounded-2xl p-6 shadow-sm ring-1 ring-purple-50">
+                            <h4 className="text-purple-900 font-bold flex items-center gap-2 mb-4 text-sm uppercase tracking-wide">
+                                <Icon name="star" size={16} className="fill-purple-500 text-purple-500" />
+                                Customer Feedback
+                            </h4>
+                            <div className="space-y-3">
+                                {survey.questions.map((q, idx) => (
+                                    <div key={idx} className="bg-purple-50/50 p-3 rounded-lg border border-purple-100/50">
+                                        <div className="text-slate-800 font-medium text-sm mb-1">{q.question}</div>
+                                        <div className="flex justify-between items-center mt-2">
+                                            <span className="text-slate-600 italic text-xs bg-white px-2 py-1 rounded border border-purple-100">"{q.answer}"</span>
+                                            {q.score && <span className="text-purple-700 font-bold text-xs bg-purple-100 px-2 py-1 rounded">Score: {q.score}</span>}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Chat Messages */}
+                    <div className="space-y-6">
+                        {chat.messages && chat.messages.map((msg, idx) => {
+                            const isAgent = msg.sender === chat.agentName;
+                            const isSystem = ['System', 'Bot', 'Lenovo Bot'].includes(msg.sender);
+                            
+                            if (isSystem) {
+                                return (
+                                    <div key={idx} className="flex justify-center my-4 opacity-75">
+                                        <span className="bg-slate-200 text-slate-500 text-[10px] font-bold uppercase tracking-wide px-3 py-1 rounded-full shadow-sm">
+                                            {msg.text && msg.text.length > 60 ? msg.text.substring(0,60) + "..." : msg.text || "System Event"}
+                                        </span>
+                                    </div>
+                                );
+                            }
+
+                            return (
+                                <div key={idx} className={`flex ${isAgent ? 'justify-end' : 'justify-start'}`}>
+                                    <div className={`flex flex-col max-w-[85%] ${isAgent ? 'items-end' : 'items-start'}`}>
+                                        <span className="text-[10px] text-slate-400 mb-1 px-1 font-medium">
+                                            {msg.sender}
+                                        </span>
+                                        <div className={`p-4 rounded-2xl shadow-sm text-sm leading-relaxed relative group ${isAgent ? 'bg-blue-600 text-white rounded-br-none' : 'bg-white text-slate-800 rounded-bl-none border border-slate-200'}`}>
+                                            <div className="whitespace-pre-wrap">{msg.text || <span className="italic opacity-50">Empty message</span>}</div>
+                                            {msg.originalText && msg.originalText !== msg.text && (
+                                                <div className="mt-2 pt-2 border-t border-white/20 text-xs opacity-75 italic">
+                                                    Original: {msg.originalText}
+                                                </div>
+                                            )}
+                                        </div>
+                                        <span className="text-[10px] text-slate-300 mt-1 px-1">
+                                            {safeParseDate(msg.time).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                        </span>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                        <div ref={bottomRef} />
+                    </div>
+                </div>
+            );
+        };
+
+        const QAForm = ({ chat, survey, initialData, onSave, analyzeFn }) => {
+            const [data, setData] = useState({
+                criteria: {},
+                csatStatement: "",
+                comment: "",
+                criticalCategory: "None",
+                criticalReason: "",
+                finalScore: 0,
+                flags: []
+            });
+            const [overrideScore, setOverrideScore] = useState(false);
+            const [autoRan, setAutoRan] = useState(false);
+
+            useEffect(() => {
+                if (initialData) {
+                    setData(initialData);
+                    setAutoRan(true);
+                } else if (!autoRan && chat && chat.id) {
+                    try {
+                        const result = analyzeFn(chat, survey);
+                        const initCriteria = {};
+                        Object.values(QA_STRUCTURE).forEach(cat => cat.forEach(q => initCriteria[q.id] = 'N/A'));
+                        const mergedCriteria = { ...initCriteria, ...result.criteria };
+                        
+                        const score = calculateScore(mergedCriteria, "None");
+
+                        setData({
+                            criteria: mergedCriteria,
+                            flags: result.flags,
+                            comment: result.failures.length > 0 ? "Potential Failures: " + result.failures.join(", ") : "AI Analysis: Compliant.",
+                            csatStatement: survey ? `Survey Score: ${survey.questions[0]?.score || 'N/A'}` : "",
+                            criticalCategory: "None",
+                            criticalReason: "",
+                            finalScore: score
+                        });
+                        setAutoRan(true);
+                    } catch (e) {
+                        console.error("Analysis failed", e);
+                        // Fallback to empty
+                        setData(prev => ({ ...prev, comment: "Error during auto-analysis." }));
+                    }
+                }
+            }, [chat.id, initialData]);
+
+            // Score Calculation Effect
+            useEffect(() => {
+                if (overrideScore) return;
+                const score = calculateScore(data.criteria, data.criticalCategory);
+                setData(prev => ({ ...prev, finalScore: score }));
+            }, [data.criteria, data.criticalCategory, overrideScore]);
+
+            useEffect(() => {
+                onSave(data);
+            }, [data]);
+
+            const handleCriteria = (id, val) => {
+                setData(prev => ({ ...prev, criteria: { ...prev.criteria, [id]: val } }));
+            };
+
+            return (
+                <div className="w-[500px] bg-white border-l border-slate-200 shadow-2xl overflow-y-auto pb-20 relative z-40 flex flex-col h-full">
+                    {/* Sticky Header */}
+                    <div className="sticky top-0 bg-white/95 backdrop-blur-md border-b border-slate-200 z-50 px-6 py-4 shadow-sm">
+                        <div className="flex justify-between items-start">
+                            <div>
+                                <h3 className="font-bold text-slate-800 text-lg flex items-center gap-2">
+                                    Scorecard
+                                    {data.flags.length > 0 && <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>}
+                                </h3>
+                                <div className="flex flex-wrap gap-1 mt-2">
+                                    {data.flags.map(f => (
+                                        <span key={f} className={`text-[9px] px-2 py-1 rounded-full font-bold uppercase tracking-wide border ${f.includes('Angry') ? 'bg-red-50 text-red-600 border-red-200' : 'bg-blue-50 text-blue-600 border-blue-200'}`}>
+                                            {f}
+                                        </span>
+                                    ))}
+                                    {data.flags.length === 0 && <span className="text-[10px] text-slate-400 italic">No flags detected</span>}
+                                </div>
+                            </div>
+                            <div className="text-right">
+                                <div className={`text-4xl font-black tabular-nums tracking-tighter ${data.finalScore >= 85 ? 'text-emerald-600' : data.finalScore < 50 ? 'text-rose-600' : 'text-amber-500'}`}>
+                                    {overrideScore ? (
+                                        <input 
+                                            type="number" 
+                                            value={data.finalScore} 
+                                            onChange={e=>setData({...data, finalScore: parseInt(e.target.value) || 0})} 
+                                            className="w-20 text-right border-b-2 border-slate-300 focus:border-blue-500 outline-none bg-transparent"
+                                        />
+                                    ) : (
+                                        `${data.finalScore}%`
+                                    )}
+                                </div>
+                                <label className="text-[10px] text-slate-400 cursor-pointer flex items-center justify-end gap-1 mt-1 hover:text-blue-500">
+                                    <input type="checkbox" checked={overrideScore} onChange={e=>setOverrideScore(e.target.checked)} /> Override
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="p-6 space-y-8 flex-1">
+                        {/* Critical Fails */}
+                        <div className={`p-4 rounded-xl border-2 transition-all ${data.criticalCategory !== "None" ? 'bg-red-50 border-red-200 shadow-inner' : 'bg-slate-50 border-dashed border-slate-200'}`}>
+                            <label className={`block text-xs font-bold uppercase mb-2 ${data.criticalCategory !== "None" ? 'text-red-700' : 'text-slate-400'}`}>Critical Failure (Zero Score)</label>
+                            <select 
+                                value={data.criticalCategory}
+                                onChange={e => setData({...data, criticalCategory: e.target.value, criticalReason: ""})}
+                                className="w-full p-2.5 text-sm border border-slate-300 rounded-lg mb-3 focus:ring-2 focus:ring-red-500 outline-none"
+                            >
+                                <option value="None">None - Clean Session</option>
+                                {Object.keys(CRITICAL_CATEGORIES).filter(k=>k!=="None").map(k => <option key={k} value={k}>{k}</option>)}
+                            </select>
+                            
+                            {data.criticalCategory !== "None" && (
+                                <div className="animate-in fade-in slide-in-from-top-2">
+                                    <label className="block text-[10px] font-bold text-red-600 uppercase mb-1">Reason</label>
+                                    <select 
+                                        value={data.criticalReason}
+                                        onChange={e => setData({...data, criticalReason: e.target.value})}
+                                        className="w-full p-2.5 text-sm border border-red-300 bg-white rounded-lg text-red-700 focus:ring-2 focus:ring-red-500 outline-none"
+                                    >
+                                        <option value="">Select Specific Violation...</option>
+                                        {CRITICAL_CATEGORIES[data.criticalCategory].map(r => <option key={r} value={r}>{r}</option>)}
+                                    </select>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Weighted Categories */}
+                        {Object.entries(QA_STRUCTURE).map(([cat, questions]) => (
+                            <div key={cat} className="space-y-3">
+                                <h4 className="text-xs font-extrabold uppercase text-slate-400 border-b border-slate-100 pb-2 flex justify-between items-end">
+                                    {cat} 
+                                    <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded-full text-slate-500">
+                                        Weight: {questions.reduce((a,b)=>a+b.weight,0)}%
+                                    </span>
+                                </h4>
+                                <div className="space-y-3">
+                                    {questions.map(q => (
+                                        <div key={q.id} className="bg-white hover:bg-slate-50 p-3 rounded-lg border border-slate-100 transition-colors shadow-sm">
+                                            <div className="flex justify-between items-start mb-3">
+                                                <p className="text-xs text-slate-700 font-medium leading-tight flex-1 mr-2">{q.text}</p>
+                                                <span className="text-[9px] text-slate-400 font-mono bg-slate-50 px-1 rounded">{q.weight}%</span>
+                                            </div>
+                                            <div className="flex gap-1 bg-slate-100 p-1 rounded-lg">
+                                                {['Yes', 'No', 'N/A'].map(opt => (
+                                                    <button
+                                                        key={opt}
+                                                        onClick={() => handleCriteria(q.id, opt)}
+                                                        className={`flex-1 py-1.5 rounded-md text-[10px] font-bold transition-all shadow-sm ${
+                                                            data.criteria[q.id] === opt 
+                                                            ? opt === 'Yes' ? 'bg-emerald-500 text-white shadow-emerald-200' 
+                                                              : opt === 'No' ? 'bg-rose-500 text-white shadow-rose-200' 
+                                                              : 'bg-slate-500 text-white shadow-slate-200'
+                                                            : 'bg-white text-slate-500 hover:bg-slate-200 shadow-none'
+                                                        }`}
+                                                    >
+                                                        {opt}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ))}
+
+                        {/* Comments */}
+                        <div className="space-y-4 pt-6 border-t border-slate-200">
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-2">CSAT Statement Capture</label>
+                                <input 
+                                    type="text"
+                                    className="w-full p-3 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none bg-slate-50"
+                                    value={data.csatStatement}
+                                    onChange={e => setData({...data, csatStatement: e.target.value})}
+                                    placeholder="Paste closing statement here..."
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Evaluator Comments</label>
+                                <textarea 
+                                    className="w-full p-3 text-sm border border-slate-300 rounded-lg h-32 focus:ring-2 focus:ring-blue-500 outline-none resize-none bg-slate-50"
+                                    value={data.comment}
+                                    onChange={e => setData({...data, comment: e.target.value})}
+                                    placeholder="Add detailed coaching notes, strengths, and areas for improvement..."
+                                />
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
         const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<MainApp />);
+        root.render(<App />);
     </script>
 </body>
 </html>
