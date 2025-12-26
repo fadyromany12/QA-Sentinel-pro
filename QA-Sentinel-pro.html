@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QA Sentinel Pro - Omni-Channel Analytics</title>
+    
+    <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    
+    <script src="https://unpkg.com/prop-types/prop-types.min.js"></script>
+    <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+    
+    <style>
+        body { background-color: #f8fafc; font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+        .glass { background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(8px); }
+        .card-hover:hover { transform: translateY(-2px); box-shadow: 0 12px 24px -8px rgba(0, 0, 0, 0.15); transition: all 0.2s ease; }
+        .gradient-text { background-clip: text; -webkit-background-clip: text; color: transparent; background-image: linear-gradient(to right, #3b82f6, #8b5cf6); }
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .animate-fade-in { animation: fadeIn 0.5s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        // --- LIBRARY CHECK ---
+        // This prevents the white screen of death if a CDN fails
+        if (!window.React || !window.ReactDOM || !window.Papa || !window.Recharts) {
+            document.getElementById('root').innerHTML = `
+                <div style="height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; color:#ef4444; font-family:sans-serif; text-align:center;">
+                    <h1 style="font-size:24px; font-weight:bold; margin-bottom:10px;">Library Load Error</h1>
+                    <p>One of the external libraries failed to load.</p>
+                    <p style="font-size:12px; color:#666;">Check your internet connection or try refreshing the page.</p>
+                </div>
+            `;
+            throw new Error("Critical libraries missing");
+        }
+
+        const { useState, useEffect, useMemo } = React;
+        const { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } = window.Recharts;
+
+        // --- CONSTANTS & CONFIG ---
+        const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
+        
+        // "AI" Dictionaries
+        const CRITICAL_KEYWORDS = ['lawyer', 'sue', 'legal', 'supervisor', 'manager', 'complaint', 'social media', 'scam', 'fraud', 'angry', 'never buy', 'shame'];
+        const SENTIMENT_POSITIVE = ['great', 'amazing', 'thanks', 'thank', 'good', 'helpful', 'fast', 'excellent', 'love', 'best'];
+        const SENTIMENT_NEGATIVE = ['bad', 'slow', 'rude', 'worst', 'useless', 'waiting', 'ignore', 'broken', 'waste', 'stupid'];
+        
+        const TOPICS = {
+            'Shipping': ['delivery', 'ship', 'arrive', 'delay', 'tracking', 'order', 'wait'],
+            'Product': ['screen', 'keyboard', 'laptop', 'broken', 'quality', 'battery', 'charge'],
+            'Service': ['agent', 'rude', 'slow', 'response', 'answer', 'chat', 'support'],
+            'Refund': ['money', 'refund', 'return', 'back', 'card', 'charge']
+        };
+
+        // --- HELPER FUNCTIONS ---
+        const analyzeSentiment = (text) => {
+            if (!text) return 'Neutral';
+            const lower = text.toLowerCase();
+            let score = 0;
+            SENTIMENT_POSITIVE.forEach(w => { if (lower.includes(w)) score++; });
+            SENTIMENT_NEGATIVE.forEach(w => { if (lower.includes(w)) score--; });
+            if (score > 0) return 'Positive';
+            if (score < 0) return 'Negative';
+            return 'Neutral';
+        };
+
+        const detectTopics = (text) => {
+            if (!text) return ['General'];
+            const lower = text.toLowerCase();
+            const found = [];
+            Object.entries(TOPICS).forEach(([topic, keywords]) => {
+                if (keywords.some(k => lower.includes(k))) found.push(topic);
+            });
+            return found.length ? found : ['General'];
+        };
+
+        const isCritical = (text) => {
+            if (!text) return false;
+            return CRITICAL_KEYWORDS.some(k => text.toLowerCase().includes(k));
+        };
+
+        // --- COMPONENTS ---
+
+        const FileUpload = ({ label, onUpload, iconName }) => (
+            <div className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-slate-300 rounded-xl bg-slate-50 hover:bg-slate-100 transition-colors cursor-pointer relative group">
+                <input 
+                    type="file" 
+                    accept=".csv" 
+                    onChange={(e) => onUpload(e.target.files[0])}
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                />
+                <div className="text-slate-400 group-hover:text-blue-500 mb-2 transition-colors">
+                     <i data-lucide={iconName} width="32" height="32"></i>
+                </div>
+                <span className="text-sm font-medium text-slate-500 group-hover:text-slate-700">{label}</span>
+                <span className="text-xs text-slate-400 mt-1">Click or drag CSV</span>
+            </div>
+        );
+
+        const MetricCard = ({ title, value, subtext, trend, color = "blue" }) => (
+            <div className="bg-white p-6 rounded-xl border border-slate-100 shadow-sm card-hover">
+                <h3 className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-2">{title}</h3>
+                <div className="flex items-end gap-2">
+                    <span className={`text-3xl font-bold text-${color}-600`}>{value}</span>
+                    {trend && <span className={`text-xs font-medium ${trend > 0 ? 'text-green-500' : 'text-red-500'} mb-1`}>{trend > 0 ? '+' : ''}{trend}%</span>}
+                </div>
+                <p className="text-xs text-slate-400 mt-2">{subtext}</p>
+            </div>
+        );
+
+        const AgentScorecard = ({ chat, onClose }) => {
+            const [scores, setScores] = useState({
+                greeting: 0,
+                empathy: 0,
+                solution: 0,
+                closing: 0,
+                grammar: 0
+            });
+            
+            const total = Object.values(scores).reduce((a,b) => a+b, 0);
+
+            useEffect(() => {
+                if(window.lucide) window.lucide.createIcons();
+            }, []);
+
+            return (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl animate-fade-in flex flex-col">
+                        <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50 sticky top-0">
+                            <div>
+                                <h2 className="text-xl font-bold text-slate-800">Quality Scorecard</h2>
+                                <p className="text-sm text-slate-500">Auditing Chat #{chat?.chatId}</p>
+                            </div>
+                            <button onClick={onClose} className="p-2 hover:bg-slate-200 rounded-full">
+                                <i data-lucide="x" className="w-5 h-5"></i>
+                            </button>
+                        </div>
+                        
+                        <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-8 overflow-y-auto">
+                            {/* Chat Preview */}
+                            <div className="space-y-4">
+                                <h3 className="font-semibold text-slate-700 flex items-center gap-2">
+                                    <i data-lucide="message-square" className="w-4 h-4"></i> Transcript
+                                </h3>
+                                <div className="h-96 overflow-y-auto bg-slate-50 rounded-lg p-4 text-sm border border-slate-200">
+                                    {chat?.transcript && chat.transcript.length > 0 ? (
+                                        chat.transcript.map((line, i) => (
+                                            <div key={i} className={`mb-3 ${line.from === 'Customer' ? 'pl-4' : 'pr-4'}`}>
+                                                <div className={`p-3 rounded-lg ${line.from === 'Customer' ? 'bg-white border border-slate-200 rounded-tl-none' : 'bg-blue-50 text-blue-900 rounded-tr-none'}`}>
+                                                    <p className="text-xs font-bold mb-1 opacity-70">{line.from} <span className="font-normal opacity-50">• {line.time}</span></p>
+                                                    <p>{line.text}</p>
+                                                </div>
+                                            </div>
+                                        ))
+                                    ) : (
+                                        <div className="flex items-center justify-center h-full text-slate-400">
+                                            No transcript data available.
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Scoring Form */}
+                            <div className="space-y-6">
+                                <div className="bg-blue-50 p-4 rounded-xl text-center">
+                                    <span className="text-sm text-blue-600 font-semibold uppercase">Total Score</span>
+                                    <div className="text-4xl font-bold text-blue-700 mt-1">{total}%</div>
+                                </div>
+
+                                {[
+                                    { id: 'greeting', label: 'Greeting & Protocol', max: 10 },
+                                    { id: 'empathy', label: 'Empathy & Soft Skills', max: 25 },
+                                    { id: 'solution', label: 'Solution Accuracy', max: 40 },
+                                    { id: 'closing', label: 'Closing & Recap', max: 15 },
+                                    { id: 'grammar', label: 'Grammar & Tone', max: 10 }
+                                ].map((field) => (
+                                    <div key={field.id}>
+                                        <div className="flex justify-between mb-2">
+                                            <label className="text-sm font-medium text-slate-700">{field.label}</label>
+                                            <span className="text-xs font-bold text-slate-400">{scores[field.id]}/{field.max}</span>
+                                        </div>
+                                        <input 
+                                            type="range" 
+                                            min="0" 
+                                            max={field.max} 
+                                            value={scores[field.id]} 
+                                            onChange={(e) => setScores({...scores, [field.id]: parseInt(e.target.value)})}
+                                            className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                                        />
+                                    </div>
+                                ))}
+                                
+                                <button className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium shadow-lg shadow-blue-200 transition-all" onClick={() => alert("Audit Saved (Simulation)")}>
+                                    Submit Audit
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const MainApp = () => {
+            const [activeTab, setActiveTab] = useState('dashboard');
+            const [chatData, setChatData] = useState([]);
+            const [surveyData, setSurveyData] = useState([]);
+            const [mergedData, setMergedData] = useState([]);
+            const [loading, setLoading] = useState(false);
+            const [selectedChat, setSelectedChat] = useState(null);
+            const [showScorecard, setShowScorecard] = useState(false);
+            const [filters, setFilters] = useState({ search: '', region: 'All' });
+
+            useEffect(() => {
+                if(window.lucide) window.lucide.createIcons();
+            }, [activeTab, mergedData, showScorecard]);
+
+            // --- DATA PROCESSING ---
+            const processData = (chats, surveys) => {
+                setLoading(true);
+                setTimeout(() => {
+                    // 1. Group Chats by ID
+                    const chatMap = {};
+                    chats.forEach(row => {
+                        const id = row.chatid; 
+                        if (!chatMap[id]) {
+                            chatMap[id] = {
+                                id: id,
+                                operator: row.from !== 'Customer' && row.from !== 'System' ? row.from : 'Unknown',
+                                date: row.date,
+                                transcript: [],
+                                critical: false,
+                                topics: new Set()
+                            };
+                        }
+                        
+                        if (row.from !== 'Customer' && row.from !== 'System' && chatMap[id].operator === 'Unknown') {
+                            chatMap[id].operator = row.from;
+                        }
+
+                        const isCrit = isCritical(row.text);
+                        if(isCrit) chatMap[id].critical = true;
+                        
+                        detectTopics(row.text).forEach(t => chatMap[id].topics.add(t));
+
+                        chatMap[id].transcript.push({
+                            time: row.date?.split(' ')[1] || '',
+                            from: row.from,
+                            text: row.text,
+                            sentiment: analyzeSentiment(row.text)
+                        });
+                    });
+
+                    // 2. Process Surveys & Link
+                    const processed = surveys.map(s => {
+                        const id = s['Conversation ID'];
+                        const linkedChat = chatMap[id];
+                        
+                        let npsType = 'Passive'; 
+                        let csatScore = 0;
+                        const rawScore = parseFloat(s['Survey Answer']);
+                        const scoreVal = parseFloat(s['Survey Score']); 
+
+                        const qText = (s['Survey Question'] || '').toLowerCase();
+                        let type = 'General';
+                        if (qText.includes('rate') || qText.includes('recommend') || qText.includes('score')) {
+                            if(rawScore <= 5) type = 'CSAT';
+                            else type = 'NPS';
+                        }
+                        
+                        if (type === 'CSAT' || !type) {
+                             if (rawScore >= 4) npsType = 'Promoter'; 
+                             else if (rawScore <= 2) npsType = 'Detractor';
+                             else npsType = 'Passive';
+                        }
+
+                        if (rawScore > 5 || qText.includes('recommend')) {
+                            if (rawScore >= 9) npsType = 'Promoter';
+                            else if (rawScore >= 7) npsType = 'Passive';
+                            else npsType = 'Detractor';
+                            type = 'NPS';
+                        }
+
+                        return {
+                            surveyId: s['Survey ID'],
+                            chatId: id,
+                            date: s['Conversation Date/Time'],
+                            agent: s['Operator Name'] || linkedChat?.operator || 'Unknown',
+                            region: s['Conversation Subsite Name'] || 'Global',
+                            question: s['Survey Question'],
+                            answer: s['Survey Answer'],
+                            score: scoreVal,
+                            comment: isNaN(rawScore) ? s['Survey Answer'] : '', 
+                            type: type,
+                            npsType: npsType,
+                            sentiment: analyzeSentiment(s['Survey Answer']),
+                            critical: linkedChat?.critical || isCritical(s['Survey Answer']),
+                            chatData: linkedChat
+                        };
+                    });
+
+                    setMergedData(processed);
+                    setChatData(Object.values(chatMap));
+                    setLoading(false);
+                }, 500);
+            };
+
+            const handleFileUpload = (file, type) => {
+                Papa.parse(file, {
+                    header: true,
+                    skipEmptyLines: true,
+                    complete: (results) => {
+                        if (type === 'chats') {
+                            const newChats = results.data;
+                            setChatData(newChats); 
+                            if (surveyData.length > 0) processData(newChats, surveyData);
+                            else setChatData(newChats);
+                        } else {
+                            const newSurveys = results.data;
+                            setSurveyData(newSurveys);
+                            if (chatData.length > 0) processData(chatData, newSurveys);
+                            else processData([], newSurveys);
+                        }
+                    }
+                });
+            };
+
+            // --- AGGREGATION LOGIC ---
+            const stats = useMemo(() => {
+                if (!mergedData.length) return null;
+
+                const agents = {};
+                let totalProm = 0, totalDet = 0, totalResp = 0;
+                let totalCsatSum = 0, totalCsatCount = 0;
+
+                mergedData.forEach(d => {
+                    if (!agents[d.agent]) {
+                        agents[d.agent] = { name: d.agent, prom: 0, pass: 0, det: 0, total: 0, csatSum: 0, csatCount: 0, comments: [] };
+                    }
+                    
+                    const isNumeric = !isNaN(parseFloat(d.answer));
+                    
+                    if (isNumeric) {
+                        agents[d.agent].total++;
+                        totalResp++;
+                        
+                        if (d.npsType === 'Promoter') { agents[d.agent].prom++; totalProm++; }
+                        else if (d.npsType === 'Detractor') { agents[d.agent].det++; totalDet++; }
+                        else { agents[d.agent].pass++; }
+
+                        let score = parseFloat(d.score || d.answer); 
+                        if (score) {
+                            agents[d.agent].csatSum += score;
+                            agents[d.agent].csatCount++;
+                            totalCsatSum += score;
+                            totalCsatCount++;
+                        }
+                    } else if (d.comment.length > 2) {
+                        agents[d.agent].comments.push(d);
+                    }
+                });
+
+                const agentList = Object.values(agents).map(a => ({
+                    ...a,
+                    nps: a.total ? Math.round(((a.prom - a.det) / a.total) * 100) : 0,
+                    csat: a.csatCount ? (a.csatSum / a.csatCount).toFixed(1) : 0
+                })).sort((a,b) => b.nps - a.nps);
+
+                const overallNPS = totalResp ? Math.round(((totalProm - totalDet) / totalResp) * 100) : 0;
+                const overallCSAT = totalCsatCount ? (totalCsatSum / totalCsatCount).toFixed(1) : 0;
+
+                return {
+                    nps: overallNPS,
+                    csat: overallCSAT,
+                    promoters: totalProm,
+                    detractors: totalDet,
+                    passives: totalResp - totalProm - totalDet,
+                    agents: agentList,
+                    totalSurveys: mergedData.length
+                };
+
+            }, [mergedData]);
+
+            // --- RENDERERS ---
+
+            const renderDashboard = () => (
+                <div className="space-y-6 animate-fade-in">
+                    {/* KPI Cards */}
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                        <MetricCard title="Net Promoter Score" value={stats?.nps || 0} subtext="Global NPS based on uploads" trend={2.5} />
+                        <MetricCard title="CSAT Score" value={stats?.csat || 0} subtext="Average Satisfaction (5pt scale)" color="green" />
+                        <MetricCard title="Critical Alerts" value={mergedData.filter(d => d.critical).length} subtext="Chats requiring immediate attention" color="red" />
+                        <MetricCard title="Total Feedback" value={stats?.totalSurveys || 0} subtext="Processed survey responses" color="purple" />
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        {/* Agent Leaderboard */}
+                        <div className="lg:col-span-2 bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
+                            <div className="p-6 border-b border-slate-100 flex justify-between items-center">
+                                <h3 className="font-bold text-slate-700">Agent Performance Matrix</h3>
+                                <button className="text-blue-600 text-sm font-medium hover:underline">Export CSV</button>
+                            </div>
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-sm text-left">
+                                    <thead className="bg-slate-50 text-slate-500 font-medium">
+                                        <tr>
+                                            <th className="p-4">Agent Name</th>
+                                            <th className="p-4">NPS</th>
+                                            <th className="p-4">CSAT</th>
+                                            <th className="p-4">Prom/Pass/Det</th>
+                                            <th className="p-4">Volume</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-100">
+                                        {stats?.agents.slice(0, 10).map((agent, idx) => (
+                                            <tr key={idx} className="hover:bg-slate-50 transition-colors">
+                                                <td className="p-4 font-medium text-slate-700 flex items-center gap-2">
+                                                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center text-white text-xs font-bold">
+                                                        {agent.name.charAt(0)}
+                                                    </div>
+                                                    {agent.name}
+                                                </td>
+                                                <td className="p-4">
+                                                    <span className={`px-2 py-1 rounded-full text-xs font-bold ${agent.nps >= 50 ? 'bg-green-100 text-green-700' : agent.nps >= 0 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}`}>
+                                                        {agent.nps}
+                                                    </span>
+                                                </td>
+                                                <td className="p-4 font-semibold text-slate-600">{agent.csat}</td>
+                                                <td className="p-4">
+                                                    <div className="flex items-center gap-1 text-xs">
+                                                        <span className="text-green-600 font-bold">{agent.prom}</span>/
+                                                        <span className="text-slate-400">{agent.pass}</span>/
+                                                        <span className="text-red-500 font-bold">{agent.det}</span>
+                                                    </div>
+                                                </td>
+                                                <td className="p-4 text-slate-500">{agent.total}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        {/* Distribution Chart */}
+                        <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-6">
+                            <h3 className="font-bold text-slate-700 mb-6">Sentiment Distribution</h3>
+                            <div className="h-64">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <PieChart>
+                                        <Pie
+                                            data={[
+                                                { name: 'Promoters', value: stats?.promoters || 0 },
+                                                { name: 'Passives', value: stats?.passives || 0 },
+                                                { name: 'Detractors', value: stats?.detractors || 0 }
+                                            ]}
+                                            cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value"
+                                        >
+                                            <Cell fill="#10b981" />
+                                            <Cell fill="#fbbf24" />
+                                            <Cell fill="#ef4444" />
+                                        </Pie>
+                                        <Tooltip />
+                                        <Legend verticalAlign="bottom" height={36}/>
+                                    </PieChart>
+                                </ResponsiveContainer>
+                            </div>
+                            <div className="mt-4 space-y-3">
+                                <div className="p-3 bg-red-50 rounded-lg border border-red-100">
+                                    <h5 className="text-xs font-bold text-red-800 uppercase mb-1">Top Complaint</h5>
+                                    <p className="text-sm text-red-600">"Delivery delays" appeared in 45% of detractor comments.</p>
+                                </div>
+                                <div className="p-3 bg-green-50 rounded-lg border border-green-100">
+                                    <h5 className="text-xs font-bold text-green-800 uppercase mb-1">Top Strength</h5>
+                                    <p className="text-sm text-green-600">"Agent Friendliness" mentioned in 60% of promoter comments.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+
+            const renderSurveyFeed = () => (
+                <div className="space-y-4 animate-fade-in">
+                    <div className="flex gap-4 mb-6">
+                        <div className="relative flex-1">
+                            <i data-lucide="search" className="absolute left-3 top-3 w-5 h-5 text-slate-400"></i>
+                            <input 
+                                type="text" 
+                                placeholder="Search comments, IDs, or Agents..." 
+                                className="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                value={filters.search}
+                                onChange={e => setFilters({...filters, search: e.target.value})}
+                            />
+                        </div>
+                        <select className="px-4 py-2 rounded-lg border border-slate-200 bg-white text-slate-600 focus:outline-none">
+                            <option>All Regions</option>
+                            <option>United Kingdom</option>
+                            <option>Denmark</option>
+                        </select>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-4">
+                        {mergedData
+                            .filter(d => d.comment && d.comment.length > 2) // Only show actual comments
+                            .filter(d => d.comment.toLowerCase().includes(filters.search.toLowerCase()) || d.chatId.includes(filters.search))
+                            .slice(0, 50)
+                            .map((item, i) => (
+                            <div key={i} className={`bg-white p-5 rounded-xl border ${item.critical ? 'border-red-200 bg-red-50/30' : 'border-slate-100'} shadow-sm hover:shadow-md transition-shadow`}>
+                                <div className="flex justify-between items-start mb-3">
+                                    <div className="flex items-center gap-2">
+                                        <span className={`px-2 py-1 rounded text-xs font-bold uppercase ${
+                                            item.npsType === 'Promoter' ? 'bg-green-100 text-green-700' : 
+                                            item.npsType === 'Detractor' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'
+                                        }`}>{item.npsType}</span>
+                                        <span className="text-slate-400 text-xs">ID: {item.chatId}</span>
+                                    </div>
+                                    <span className="text-xs text-slate-400">{item.date}</span>
+                                </div>
+                                <p className="text-slate-700 text-sm mb-4 leading-relaxed">"{item.comment}"</p>
+                                
+                                <div className="flex items-center justify-between pt-3 border-t border-slate-100">
+                                    <div className="flex items-center gap-3">
+                                        <div className="flex items-center gap-1 text-xs text-slate-500">
+                                            <i data-lucide="user" className="w-3 h-3"></i> {item.agent}
+                                        </div>
+                                        <div className="flex items-center gap-1 text-xs text-slate-500">
+                                            <i data-lucide="map-pin" className="w-3 h-3"></i> {item.region}
+                                        </div>
+                                    </div>
+                                    
+                                    {item.chatData ? (
+                                        <button 
+                                            onClick={() => {
+                                                setSelectedChat({
+                                                    chatId: item.chatId,
+                                                    transcript: item.chatData.transcript
+                                                });
+                                                setShowScorecard(true);
+                                            }}
+                                            className="text-blue-600 text-sm font-medium hover:text-blue-700 flex items-center gap-1"
+                                        >
+                                            <i data-lucide="eye" className="w-4 h-4"></i> Audit Chat
+                                        </button>
+                                    ) : (
+                                        <span className="text-slate-300 text-xs italic">Transcript Unavailable</span>
+                                    )}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+
+            // --- MAIN UI ---
+            return (
+                <div className="min-h-screen bg-slate-50 flex">
+                    {/* Sidebar */}
+                    <div className="w-64 bg-slate-900 text-slate-300 flex flex-col fixed h-full z-20">
+                        <div className="p-6 border-b border-slate-800">
+                            <h1 className="text-white font-bold text-xl tracking-tight flex items-center gap-2">
+                                <i data-lucide="shield-check" className="w-6 h-6 text-blue-500"></i>
+                                QA Sentinel
+                            </h1>
+                            <p className="text-xs text-slate-500 mt-1">Pro Analytics Suite</p>
+                        </div>
+                        
+                        <nav className="flex-1 p-4 space-y-2">
+                            {[
+                                { id: 'dashboard', label: 'Dashboard', icon: 'layout-dashboard' },
+                                { id: 'surveys', label: 'Survey Analysis', icon: 'message-circle' },
+                                { id: 'chats', label: 'Chat Logs', icon: 'file-text' },
+                            ].map(item => (
+                                <button
+                                    key={item.id}
+                                    onClick={() => setActiveTab(item.id)}
+                                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all ${
+                                        activeTab === item.id 
+                                        ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50' 
+                                        : 'hover:bg-slate-800 hover:text-white'
+                                    }`}
+                                >
+                                    <i data-lucide={item.icon} className="w-5 h-5"></i>
+                                    {item.label}
+                                </button>
+                            ))}
+                        </nav>
+
+                        <div className="p-4 border-t border-slate-800">
+                            <div className="bg-slate-800 rounded-xl p-4">
+                                <h4 className="text-xs font-bold text-white uppercase mb-3">Data Sources</h4>
+                                <div className="space-y-3">
+                                    <FileUpload 
+                                        label="Team Chats" 
+                                        iconName="message-square"
+                                        onUpload={(f) => handleFileUpload(f, 'chats')} 
+                                    />
+                                    <FileUpload 
+                                        label="Surveys" 
+                                        iconName="clipboard-list"
+                                        onUpload={(f) => handleFileUpload(f, 'surveys')} 
+                                    />
+                                </div>
+                                {loading && <p className="text-xs text-blue-400 mt-2 animate-pulse">Processing AI Analytics...</p>}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Main Content */}
+                    <main className="flex-1 ml-64 p-8">
+                        <header className="flex justify-between items-center mb-8">
+                            <div>
+                                <h2 className="text-2xl font-bold text-slate-800">
+                                    {activeTab === 'dashboard' && 'Executive Dashboard'}
+                                    {activeTab === 'surveys' && 'CSAT & Feedback Explorer'}
+                                    {activeTab === 'chats' && 'Live Chat Repository'}
+                                </h2>
+                                <p className="text-slate-500 text-sm mt-1">
+                                    {mergedData.length > 0 
+                                        ? `Analysis of ${mergedData.length} customer interactions` 
+                                        : 'Upload CSV files to begin analysis'}
+                                </p>
+                            </div>
+                            <div className="flex gap-2">
+                                <button className="px-4 py-2 bg-white border border-slate-200 rounded-lg text-slate-600 text-sm font-medium shadow-sm hover:bg-slate-50">
+                                    <i data-lucide="download" className="w-4 h-4 inline mr-2"></i> Report
+                                </button>
+                                <button className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium shadow-md shadow-blue-200 hover:bg-blue-700">
+                                    <i data-lucide="filter" className="w-4 h-4 inline mr-2"></i> Filters
+                                </button>
+                            </div>
+                        </header>
+
+                        {/* Content Area */}
+                        {mergedData.length === 0 && !loading ? (
+                            <div className="flex flex-col items-center justify-center h-96 text-center">
+                                <div className="w-16 h-16 bg-blue-50 rounded-full flex items-center justify-center mb-4">
+                                    <i data-lucide="upload-cloud" className="w-8 h-8 text-blue-500"></i>
+                                </div>
+                                <h3 className="text-lg font-bold text-slate-700">Waiting for Data</h3>
+                                <p className="text-slate-400 max-w-sm mt-2">Please upload both the Team Chats CSV and Survey Detail CSV using the panel on the left.</p>
+                            </div>
+                        ) : (
+                            <>
+                                {activeTab === 'dashboard' && renderDashboard()}
+                                {activeTab === 'surveys' && renderSurveyFeed()}
+                                {activeTab === 'chats' && (
+                                    <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
+                                        <table className="w-full text-sm text-left">
+                                            <thead className="bg-slate-50 text-slate-500 font-medium border-b border-slate-100">
+                                                <tr>
+                                                    <th className="p-4 w-32">Chat ID</th>
+                                                    <th className="p-4">Date</th>
+                                                    <th className="p-4">Operator</th>
+                                                    <th className="p-4">Topics</th>
+                                                    <th className="p-4 text-center">Status</th>
+                                                    <th className="p-4">Action</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-100">
+                                                {chatData.slice(0, 50).map((chat, i) => (
+                                                    <tr key={i} className="hover:bg-slate-50 group">
+                                                        <td className="p-4 font-mono text-xs text-slate-500">{chat.id}</td>
+                                                        <td className="p-4 text-slate-600">{chat.date}</td>
+                                                        <td className="p-4 font-medium text-slate-700">{chat.operator}</td>
+                                                        <td className="p-4">
+                                                            <div className="flex gap-1 flex-wrap">
+                                                                {Array.from(chat.topics).map(t => (
+                                                                    <span key={t} className="px-2 py-0.5 bg-slate-100 text-slate-600 rounded text-xs border border-slate-200">{t}</span>
+                                                                ))}
+                                                            </div>
+                                                        </td>
+                                                        <td className="p-4 text-center">
+                                                            {chat.critical ? (
+                                                                <span className="px-2 py-1 bg-red-100 text-red-700 rounded-full text-xs font-bold animate-pulse">CRITICAL</span>
+                                                            ) : (
+                                                                <span className="px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs font-bold">Normal</span>
+                                                            )}
+                                                        </td>
+                                                        <td className="p-4">
+                                                            <button 
+                                                                onClick={() => {
+                                                                    setSelectedChat({
+                                                                        chatId: chat.id,
+                                                                        transcript: chat.transcript
+                                                                    });
+                                                                    setShowScorecard(true);
+                                                                }}
+                                                                className="text-blue-600 hover:text-blue-800 font-medium text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+                                                            >
+                                                                Review
+                                                            </button>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                )}
+                            </>
+                        )}
+                    </main>
+
+                    {/* Modals */}
+                    {showScorecard && selectedChat && (
+                        <AgentScorecard chat={selectedChat} onClose={() => setShowScorecard(false)} />
+                    )}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<MainApp />);
+    </script>
+</body>
+</html>
