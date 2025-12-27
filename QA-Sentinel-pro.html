@@ -66,6 +66,17 @@
             border: 1px solid rgba(0, 0, 0, 0.05);
         }
 
+        /* Loading Spinner */
+        .loader {
+            border: 4px solid rgba(255, 255, 255, 0.1);
+            border-left-color: #E2231A;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
         /* Scrollbars */
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
@@ -261,25 +272,37 @@
 
             useEffect(() => {
                 if (!canvasRef.current) return;
-                if (chartRef.current) chartRef.current.destroy();
                 
-                const finalOptions = {
-                    ...options,
-                    plugins: {
-                        ...options.plugins,
-                        datalabels: {
-                            color: '#fff',
-                            font: { weight: 'bold', size: 10 },
-                            display: (context) => context.dataset.data[context.dataIndex] > 0,
-                            formatter: (value) => value,
-                            // CRITICAL FIX: Allow deep merge override of datalabels from props
-                            ...(options.plugins?.datalabels || {})
+                // Wrap chart creation in RAF to prevent layout thrashing
+                requestAnimationFrame(() => {
+                    if (chartRef.current) {
+                        chartRef.current.destroy();
+                        chartRef.current = null;
+                    }
+                    
+                    const finalOptions = {
+                        ...options,
+                        plugins: {
+                            ...options.plugins,
+                            datalabels: {
+                                color: '#fff',
+                                font: { weight: 'bold', size: 10 },
+                                display: (context) => context.dataset.data[context.dataIndex] > 0,
+                                formatter: (value) => value,
+                                ...(options.plugins?.datalabels || {})
+                            }
                         }
+                    };
+                    
+                    chartRef.current = new Chart(canvasRef.current, { type, data, options: finalOptions });
+                });
+
+                return () => { 
+                    if (chartRef.current) {
+                        chartRef.current.destroy(); 
+                        chartRef.current = null;
                     }
                 };
-                
-                chartRef.current = new Chart(canvasRef.current, { type, data, options: finalOptions });
-                return () => { if (chartRef.current) chartRef.current.destroy(); };
             }, [type, data, options]);
 
             return <canvas ref={canvasRef} />;
@@ -289,8 +312,6 @@
         const HighlightedText = ({ text }) => {
             if (!text) return null;
 
-            const escapeRegExp = (string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            
             const positiveKeywords = [
                 ...KEYWORDS.greetings, ...KEYWORDS.empathy, ...KEYWORDS.hold, 
                 ...KEYWORDS.warranty, ...KEYWORDS.accessories, ...KEYWORDS.closing, 
@@ -322,6 +343,19 @@
             );
         };
 
+        // --- LOADING OVERLAY ---
+        // FIX: Using CSS opacity instead of conditional rendering to avoid 'removeChild' errors on heavy load
+        const LoadingOverlay = ({ progress, message, visible }) => (
+            <div className={`fixed inset-0 z-[100] flex flex-col items-center justify-center bg-slate-950/90 backdrop-blur-md transition-opacity duration-300 ${visible ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}>
+                <div className="loader mb-6"></div>
+                <h3 className="text-xl font-bold text-white mb-2">{message}</h3>
+                <div className="w-64 h-2 bg-slate-800 rounded-full overflow-hidden">
+                    <div className="h-full bg-lenovo-red transition-all duration-300" style={{ width: `${progress}%` }}></div>
+                </div>
+                <p className="text-slate-400 text-sm mt-2">{progress}% Complete</p>
+            </div>
+        );
+
         // --- MODAL COMPONENT ---
         const Modal = ({ isOpen, onClose, title, children }) => {
             if (!isOpen) return null;
@@ -341,15 +375,59 @@
             );
         };
 
+        // --- ERROR BOUNDARY ---
+        class ErrorBoundary extends React.Component {
+            constructor(props) {
+                super(props);
+                this.state = { hasError: false, error: null };
+            }
+
+            static getDerivedStateFromError(error) {
+                return { hasError: true, error };
+            }
+
+            componentDidCatch(error, errorInfo) {
+                console.error("Uncaught error:", error, errorInfo);
+            }
+
+            render() {
+                if (this.state.hasError) {
+                    return (
+                        <div className="min-h-screen flex items-center justify-center bg-slate-950 text-white p-8 text-center font-sans">
+                            <div className="max-w-xl bg-slate-900 p-8 rounded-2xl border border-slate-800 shadow-2xl">
+                                <div className="text-lenovo-red mb-4 flex justify-center"><Icon name="alert-triangle" size={48} /></div>
+                                <h1 className="text-3xl font-bold text-white mb-4">Something went wrong</h1>
+                                <p className="text-slate-400 mb-6">
+                                    The application encountered a critical error. This is likely due to the file size exceeding browser memory limits.
+                                </p>
+                                <div className="p-4 bg-slate-950 rounded border border-slate-800 font-mono text-xs text-left overflow-auto max-h-40 mb-6 text-red-400">
+                                    {this.state.error && this.state.error.toString()}
+                                </div>
+                                <button onClick={() => window.location.reload()} className="px-6 py-3 bg-lenovo-red text-white rounded-lg font-bold hover:bg-red-700 transition-colors w-full">
+                                    Reload Application
+                                </button>
+                            </div>
+                        </div>
+                    );
+                }
+                return this.props.children;
+            }
+        }
+
         // --- MAIN APP COMPONENT ---
 
         const App = () => {
             // Data State
             const [chats, setChats] = useState([]);
             const [surveys, setSurveys] = useState({});
-            // qaData: { chatId: { score, criteria: {}, flags: [], criticalFail: "", criticalReason: "", status: "AI" | "Reviewed" } }
             const [qaData, setQaData] = useState({}); 
+            const [storageError, setStorageError] = useState(null);
             
+            // Loading State
+            const [isLoading, setIsLoading] = useState(false);
+            const [loadingProgress, setLoadingProgress] = useState(0);
+            const [loadingMessage, setLoadingMessage] = useState('');
+
             // UI State
             const [view, setView] = useState('upload'); // 'upload', 'workspace'
             const [darkMode, setDarkMode] = useState(true);
@@ -391,7 +469,13 @@
 
             useEffect(() => {
                 if (chats.length > 0) {
-                    localStorage.setItem('lenovo-qa-data', JSON.stringify({ chats, surveys, qaData }));
+                    try {
+                        localStorage.setItem('lenovo-qa-data', JSON.stringify({ chats, surveys, qaData }));
+                        setStorageError(null);
+                    } catch (e) {
+                        console.warn("Storage Limit Exceeded", e);
+                        setStorageError("Auto-Save Disabled: Data size exceeds browser limits. Please export your results before closing.");
+                    }
                 }
             }, [chats, surveys, qaData]);
 
@@ -400,6 +484,7 @@
                 setChats([]);
                 setSurveys({});
                 setQaData({});
+                setStorageError(null);
                 setView('upload');
             };
 
@@ -408,25 +493,55 @@
                 document.documentElement.classList.toggle('light', !darkMode);
             }, [darkMode]);
 
-            // --- LOGIC: PARSING ---
+            // --- LOGIC: PARSING & PROCESSING ---
 
             const handleFileUpload = (e, type) => {
                 const files = Array.from(e.target.files);
                 if (!files.length) return;
 
-                files.forEach(file => {
-                    Papa.parse(file, {
-                        header: true,
-                        skipEmptyLines: true,
-                        complete: (results) => {
-                            if (type === 'chats') processChatRows(results.data);
-                            if (type === 'surveys') processSurveyRows(results.data);
-                        }
+                setIsLoading(true);
+                setLoadingMessage(`Reading ${files.length} file(s)...`);
+                setLoadingProgress(0);
+
+                if (type === 'chats') {
+                    let completedFiles = 0;
+                    let aggregatedRows = [];
+
+                    files.forEach(file => {
+                        Papa.parse(file, {
+                            header: true,
+                            skipEmptyLines: true,
+                            complete: (results) => {
+                                aggregatedRows = aggregatedRows.concat(results.data);
+                                completedFiles++;
+                                
+                                setLoadingMessage(`Reading file ${completedFiles} of ${files.length}...`);
+
+                                if (completedFiles === files.length) {
+                                    setLoadingMessage(`Processing ${aggregatedRows.length} combined rows...`);
+                                    setTimeout(() => processChatRowsChunked(aggregatedRows), 100);
+                                }
+                            }
+                        });
                     });
-                });
+                } else {
+                    // Surveys - Keep as is (simple/per-request)
+                    files.forEach(file => {
+                        Papa.parse(file, {
+                            header: true,
+                            skipEmptyLines: true,
+                            complete: (results) => {
+                                processSurveyRows(results.data);
+                                setIsLoading(false);
+                            }
+                        });
+                    });
+                }
             };
 
-            const processChatRows = (rows) => {
+            // CHUNKED PROCESSING TO PREVENT FREEZING
+            const processChatRowsChunked = (rows) => {
+                // 1. Grouping (Sync is usually fine for <500k rows if simple loop)
                 const groups = {};
                 rows.forEach(row => {
                     const id = row.chatid || row['Chat ID'] || row.ConversationID;
@@ -435,54 +550,79 @@
                     groups[id].push(row);
                 });
 
-                const processed = [];
-                Object.entries(groups).forEach(([id, messages]) => {
-                    messages.sort((a, b) => new Date(a.date) - new Date(b.date));
+                const groupEntries = Object.entries(groups);
+                const totalChats = groupEntries.length;
+                const CHUNK_SIZE = 500; // Process 500 chats per tick
+                let index = 0;
+                const processedBatch = [];
 
-                    let agentName = "Unknown";
-                    let date = parseDate(messages[0]?.date);
-                    const formattedMsgs = [];
+                const processNextChunk = () => {
+                    const end = Math.min(index + CHUNK_SIZE, totalChats);
+                    
+                    for (let i = index; i < end; i++) {
+                        const [id, messages] = groupEntries[i];
+                        
+                        // -- Core Logic extracted --
+                        messages.sort((a, b) => new Date(a.date) - new Date(b.date));
 
-                    const systemMsg = messages.find(m => 
-                        (m.from === 'System' || m.text.includes('System:')) && 
-                        (m.text.includes('Proactive chat started by') || m.text.includes('Ended by') || m.text.includes('Assigned to'))
-                    );
+                        let agentName = "Unknown";
+                        let date = parseDate(messages[0]?.date);
+                        const formattedMsgs = [];
 
-                    if (systemMsg) {
-                        const text = systemMsg.text;
-                        const foundCore = CORE_AGENTS.find(a => text.includes(a));
-                        if (foundCore) agentName = foundCore;
-                        else {
-                            const match = text.match(/by\s+([A-Za-z\s]+)/);
-                            if (match && match[1]) agentName = match[1].trim();
+                        const systemMsg = messages.find(m => 
+                            (m.from === 'System' || m.text.includes('System:')) && 
+                            (m.text.includes('Proactive chat started by') || m.text.includes('Ended by') || m.text.includes('Assigned to'))
+                        );
+
+                        if (systemMsg) {
+                            const text = systemMsg.text;
+                            const foundCore = CORE_AGENTS.find(a => text.includes(a));
+                            if (foundCore) agentName = foundCore;
+                            else {
+                                const match = text.match(/by\s+([A-Za-z\s]+)/);
+                                if (match && match[1]) agentName = match[1].trim();
+                            }
                         }
-                    }
 
-                    if (agentName === "Unknown") {
-                        const coreSender = messages.find(m => CORE_AGENTS.includes(m.from));
-                        if (coreSender) agentName = coreSender.from;
-                    }
+                        if (agentName === "Unknown") {
+                            const coreSender = messages.find(m => CORE_AGENTS.includes(m.from));
+                            if (coreSender) agentName = coreSender.from;
+                        }
 
-                    messages.forEach(m => {
-                        formattedMsgs.push({
-                            sender: m.from,
-                            text: m.text,
-                            time: m.date,
-                            type: CORE_AGENTS.includes(m.from) || m.from === agentName ? 'agent' : 
-                                  ['System', 'Bot', 'Lenovo Bot'].includes(m.from) ? 'system' : 'customer'
+                        messages.forEach(m => {
+                            formattedMsgs.push({
+                                sender: m.from,
+                                text: m.text,
+                                time: m.date,
+                                type: CORE_AGENTS.includes(m.from) || m.from === agentName ? 'agent' : 
+                                      ['System', 'Bot', 'Lenovo Bot'].includes(m.from) ? 'system' : 'customer'
+                            });
                         });
-                    });
 
-                    processed.push({
-                        id,
-                        agent: agentName,
-                        date, 
-                        messages: formattedMsgs,
-                        dateStr: messages[0]?.date
-                    });
-                });
+                        processedBatch.push({
+                            id,
+                            agent: agentName,
+                            date, 
+                            messages: formattedMsgs,
+                            dateStr: messages[0]?.date
+                        });
+                        // -- End Core Logic --
+                    }
 
-                setChats(prev => [...prev, ...processed]);
+                    index = end;
+                    const currentProgress = Math.round((index / totalChats) * 100);
+                    setLoadingProgress(currentProgress);
+
+                    if (index < totalChats) {
+                        setTimeout(processNextChunk, 0); // Unblock main thread
+                    } else {
+                        setChats(prev => [...prev, ...processedBatch]);
+                        // FIX: Delay hiding loader to allow React to reconcile state and DOM smoothly
+                        setTimeout(() => setIsLoading(false), 100);
+                    }
+                };
+
+                setTimeout(processNextChunk, 0);
             };
 
             const processSurveyRows = (rows) => {
@@ -589,14 +729,41 @@
                 return { criteria, flags, score, criticalFail, criticalReason, status: 'AI' };
             };
 
-            const runBatchAnalysis = () => {
+            const runBatchAnalysisChunked = () => {
+                setIsLoading(true);
+                setLoadingMessage('Analyzing conversations...');
+                setLoadingProgress(0);
+
                 const newData = { ...qaData };
-                filteredChats.forEach(chat => {
-                    if (!newData[chat.id] || newData[chat.id].status === 'AI') {
+                const chatsToAnalyze = filteredChats.filter(chat => !newData[chat.id] || newData[chat.id].status === 'AI');
+                
+                const total = chatsToAnalyze.length;
+                if (total === 0) {
+                    setIsLoading(false);
+                    return;
+                }
+
+                const CHUNK_SIZE = 200; 
+                let index = 0;
+
+                const analyzeNextChunk = () => {
+                    const end = Math.min(index + CHUNK_SIZE, total);
+                    for (let i = index; i < end; i++) {
+                        const chat = chatsToAnalyze[i];
                         newData[chat.id] = analyzeChat(chat);
                     }
-                });
-                setQaData(newData);
+                    index = end;
+                    setLoadingProgress(Math.round((index / total) * 100));
+
+                    if (index < total) {
+                        setTimeout(analyzeNextChunk, 0);
+                    } else {
+                        setQaData(newData);
+                        // FIX: Delay hiding loader to allow React to reconcile state and DOM smoothly
+                        setTimeout(() => setIsLoading(false), 100);
+                    }
+                };
+                setTimeout(analyzeNextChunk, 0);
             };
 
             // --- USER INTERACTION: MODIFY SCORE ---
@@ -806,6 +973,9 @@
             if (view === 'upload') {
                 return (
                     <div className="min-h-screen flex items-center justify-center relative overflow-hidden bg-slate-950">
+                        {/* FIX: Loading Overlay now uses VISIBILITY toggle instead of UNMOUNTING to prevent removeChild errors */}
+                        <LoadingOverlay progress={loadingProgress} message={loadingMessage} visible={isLoading} />
+                        
                         {/* Lenovo-style ambient background */}
                         <div className="absolute inset-0 bg-slate-950">
                              <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20"></div>
@@ -858,6 +1028,9 @@
 
             return (
                 <div className={`h-screen flex flex-col ${darkMode ? 'bg-slate-950' : 'bg-slate-100'} transition-colors`}>
+                    {/* FIX: Loading Overlay now uses VISIBILITY toggle instead of UNMOUNTING to prevent removeChild errors */}
+                    <LoadingOverlay progress={loadingProgress} message={loadingMessage} visible={isLoading} />
+                    
                     <Modal isOpen={showCritInfo} onClose={() => setShowCritInfo(false)} title="Critical Failure Definitions">
                         <div className="space-y-6">
                             <div className="p-4 bg-slate-800 rounded-lg border border-slate-700">
@@ -889,6 +1062,15 @@
                             </div>
                         </div>
                     </Modal>
+
+                    {/* RED WARNING BAR IF STORAGE FAILS */}
+                    {storageError && (
+                        <div className="bg-red-600 text-white text-xs font-bold text-center py-2 px-4 shadow-lg flex items-center justify-center gap-2 relative z-50 animate-fade-in">
+                            <Icon name="alert-circle" size={14} />
+                            {storageError}
+                            <button onClick={() => setStorageError(null)} className="absolute right-4 hover:opacity-75"><Icon name="x" size={14} /></button>
+                        </div>
+                    )}
 
                     <nav className={`h-16 border-b flex items-center justify-between px-6 z-30 ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
                         <div className="flex items-center gap-4">
@@ -944,13 +1126,13 @@
                                             <Icon name="dices" size={12} /> Sample 5
                                         </button>
                                     </div>
-                                    <button onClick={runBatchAnalysis} className="py-2 bg-lenovo-red hover:bg-lenovo-dark text-white rounded-lg text-xs font-bold shadow-lg shadow-red-900/20 flex items-center justify-center gap-1 w-full mt-1">
+                                    <button onClick={runBatchAnalysisChunked} className="py-2 bg-lenovo-red hover:bg-lenovo-dark text-white rounded-lg text-xs font-bold shadow-lg shadow-red-900/20 flex items-center justify-center gap-1 w-full mt-1">
                                         <Icon name="brain-circuit" size={12} /> Auto-Score All
                                     </button>
                                 </div>
                             </div>
                             <div className="flex-1 overflow-y-auto">
-                                {filteredChats.map(chat => {
+                                {filteredChats.slice(0, 100).map(chat => {
                                     const data = qaData[chat.id];
                                     const score = data?.score;
                                     const critical = data?.criticalFail;
@@ -977,6 +1159,12 @@
                                         </div>
                                     );
                                 })}
+                                {filteredChats.length > 100 && (
+                                    <div className="p-4 text-center text-xs text-slate-500 border-t border-slate-800">
+                                        Showing first 100 of {filteredChats.length} chats.<br/>
+                                        Use filters or date range to see specific records.
+                                    </div>
+                                )}
                             </div>
                         </aside>
 
@@ -1001,7 +1189,7 @@
                                                 <span className="px-2 py-0.5 bg-red-500/20 text-red-400 rounded-full text-xs font-mono">{stats.criticalQueue.length} Chats</span>
                                             </div>
                                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                                                {stats.criticalQueue.map(c => (
+                                                {stats.criticalQueue.slice(0, 6).map(c => (
                                                     <div key={c.id} className="bg-slate-900 border border-red-500/20 p-3 rounded-lg flex justify-between items-center group hover:border-red-500/50 transition-colors">
                                                         <div>
                                                             <div className="text-sm font-bold text-slate-200">{c.agent}</div>
@@ -1010,6 +1198,11 @@
                                                         <button onClick={() => setSelectedChatId(c.id)} className="px-3 py-1.5 bg-red-500/20 text-red-400 text-xs font-bold rounded hover:bg-red-500 hover:text-white transition-colors">Review</button>
                                                     </div>
                                                 ))}
+                                                {stats.criticalQueue.length > 6 && (
+                                                    <div className="flex items-center justify-center text-xs text-slate-500">
+                                                        + {stats.criticalQueue.length - 6} more criticals
+                                                    </div>
+                                                )}
                                             </div>
                                         </div>
                                     )}
@@ -1131,7 +1324,6 @@
                                                                 plugins: { 
                                                                     legend: { display: false }, 
                                                                     datalabels: { 
-                                                                        // VISIBILITY FIX: Added explicit background color styling
                                                                         display: true, 
                                                                         backgroundColor: darkMode ? 'rgba(30, 41, 59, 0.8)' : 'rgba(255, 255, 255, 0.9)',
                                                                         borderRadius: 4,
@@ -1148,7 +1340,7 @@
                                                 </div>
                                             </div>
 
-                                            {/* AGENT PERFORMANCE CHART - Restored */}
+                                            {/* AGENT PERFORMANCE CHART */}
                                             <div className={`p-6 rounded-2xl border ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200 shadow-sm'} mt-6`}>
                                                 <h3 className={`text-lg font-bold mb-4 ${darkMode ? 'text-white' : 'text-slate-800'}`}>Agent Performance</h3>
                                                 <div className="h-64">
@@ -1365,7 +1557,7 @@
         };
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
-        root.render(<App />);
+        root.render(<ErrorBoundary><App /></ErrorBoundary>);
     </script>
 </body>
 </html>
